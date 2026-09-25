@@ -1,4 +1,5 @@
 import './style.css';
+import { actionsFor } from './input/bindings';
 import * as THREE from 'three';
 import { settings, qualityProfile, detectQuality, type QualityLevel } from './core/settings';
 import { RenderPipeline } from './render/pipeline';
@@ -244,7 +245,8 @@ class App implements AppApi {
     }
     if (!open) return;
     if (this.session.ended) return; // report visible: buttons only
-    if (e.code === 'Escape' || e.code === 'KeyM' || e.code === 'KeyJ' || e.code === 'F1' || e.code === 'KeyP') {
+    const acts = actionsFor(e.code);
+    if (e.code === 'Escape' || acts.some((a) => a === 'pause' || a === 'map' || a === 'missions' || a === 'help')) {
       e.preventDefault();
       e.stopPropagation();
       this.screens.closeOverlay();

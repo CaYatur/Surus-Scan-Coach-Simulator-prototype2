@@ -215,7 +215,35 @@ export function computeSession(inp: ScoreInput): SessionResult {
   const man = st.turns.total + st.laneChanges.total;
   const sig = st.turns.signaled + st.laneChanges.signaled;
   add('signals', 'kural', 'Sinyal kullanımı', man ? pct(sig, man) * 100 - count('wrong_signal') * 10 : null, man ? `${sig}/${man} manevrada sinyal` : 'manevra yok', 'Dönüş ve şerit değişimlerinden önce sinyal.', 2);
-  add('lane_discipline', 'kural', 'Yön & şerit disiplini', 100 - (st.wrongWayTime / movingTime) * 400 - count('wrong_way') * 15 - (st.sidewalkTime / movingTime) * 300 - count('sidewalk') * 10 - count('median') * 12 - count('wrong_lane_turn') * 8 - count('lane_straddle') * 4, `ters yön ${st.wrongWayTime.toFixed(1)} sn · kaldırım ${st.sidewalkTime.toFixed(1)} sn`, 'Ters yön, kaldırım/refüj, yanlış şeritten dönüş.', 2);
+  add('lane_discipline', 'kural', 'Yön & şerit disiplini', 100 - (st.wrongWayTime / movingTime) * 400 - count('wrong_way') * 15 - (st.sidewalkTime / movingTime) * 300 - count('sidewalk') * 10 - count('median') * 12 - count('wrong_lane_turn') * 8 - count('lane_straddle') * 4 - st.solidLine * 15 - st.weaving * 10 - st.junctionBlocks * 8, `ters yön ${st.wrongWayTime.toFixed(1)} sn · kaldırım ${st.sidewalkTime.toFixed(1)} sn`, 'Ters yön, kaldırım/refüj, yanlış şeritten dönüş.', 2);
+  // Highway / divided-road rules
+  if (st.highwayTime > 20) {
+    add(
+      'highway',
+      'kural',
+      'Bölünmüş yol kuralları',
+      100 - count('shoulder_drive') * 18 - st.rightOvertakes * 22 - st.leftLaneHog * 10 - st.tooSlow * 8 - (st.shoulderTime / Math.max(1, st.highwayTime)) * 200,
+      `${(st.highwayDistance / 1000).toFixed(1)} km · ${st.rightOvertakes} sağdan sollama · ${st.leftLaneHog} sol şerit işgali · emniyet şeridi ${st.shoulderTime.toFixed(0)} sn`,
+      'Sağ şeritten gidin, sollamayı soldan yapıp sağa dönün, emniyet şeridini kullanmayın.',
+      1.5
+    );
+  }
+  if (st.roundabouts.total) {
+    const rb = st.roundabouts;
+    add('roundabout', 'kural', 'Göbekli kavşak', pct(rb.exitSignal, rb.total) * 100 - rb.yieldFail * 30, `${rb.exitSignal}/${rb.total} çıkışta sinyal · ${rb.yieldFail} yol vermeme`, 'Kavşak içindeki araç önceliklidir; çıkarken sağ sinyal verin.', 1.2);
+  }
+  const sensitiveTime = Object.entries(st.zones)
+    .filter(([k]) => /OKUL|HASTANE|ÇARŞI/.test(k))
+    .reduce((a, [, z]) => a + z.time, 0);
+  const sensitiveOver = Object.entries(st.zones)
+    .filter(([k]) => /OKUL|HASTANE|ÇARŞI/.test(k))
+    .reduce((a, [, z]) => a + z.over, 0);
+  if (sensitiveTime > 8 || st.hornViolations) {
+    add('zone_rules', 'kural', 'Özel bölgeler (okul/hastane/çarşı)', 100 - count('zone_speeding') * 25 - st.hornViolations * 15 - (sensitiveOver / Math.max(1, sensitiveTime)) * 250, `${sensitiveTime.toFixed(0)} sn bölgede · ${count('zone_speeding')} hız · ${st.hornViolations} korna`, 'Okul/hastane çevresinde 30, yaya öncelikli çarşıda 20 km/h; hastane ve okul bölgesinde korna yasak.', 1.5);
+  }
+  if (st.emergency.total) {
+    add('emergency', 'kural', 'Geçiş üstünlüğü (ambulans vb.)', pct(st.emergency.yielded, st.emergency.total) * 100, `${st.emergency.yielded}/${st.emergency.total} yol verildi`, 'Sirenli araç gelince sağa yanaşın ve yavaşlayın.', 1.2);
+  }
   if (inp.night) add('lights', 'kural', 'Gece far kullanımı', 100 - (st.nightNoLightsTime / movingTime) * 250, `${st.nightNoLightsTime.toFixed(0)} sn farsız`, 'Karanlıkta kısa farlar açık olmalı.', 1);
 
   // ——— Tarama ———
@@ -241,6 +269,10 @@ export function computeSession(inp: ScoreInput): SessionResult {
   add('lat_comfort', 'puruzsuzluk', 'Yanal konfor', latOk * 100 - (1 - latOk) * 80, `%${Math.round(latOk * 100)} süre < 0.25 g`, 'Virajlarda yanal ivme yolcu konforunu belirler.', 1.5);
   const srr = steeringReversals(samples);
   add('srr', 'puruzsuzluk', 'Direksiyon düzeltme oranı (SRR)', srr > 0 ? 100 - Math.max(0, srr - 8) * 3 : null, `${srr.toFixed(1)} /dk`, 'Steering Reversal Rate — sık küçük düzeltmeler düşük dikkati/kararsızlığı gösterebilir.', 1);
+  if (st.laneKeepN > 600) {
+    const rms = Math.sqrt(st.laneKeepSq / st.laneKeepN);
+    add('lane_keeping', 'puruzsuzluk', 'Şerit ortalama (şerit takibi)', 100 - Math.max(0, rms - 0.3) * 110, `ortalama sapma ${rms.toFixed(2)} m`, 'Aracı şeridin ortasında tutma becerisi (küçük düzeltmeler şerit değişimi sayılmaz).', 1.2);
+  }
   const cruise = moving.filter((s) => !s.inJunction && s.kmh > 20);
   const cv = cruise.length > 30 ? std(cruise.map((s) => s.kmh)) / Math.max(1, mean(cruise.map((s) => s.kmh))) : 0;
   add('speed_stability', 'puruzsuzluk', 'Hız istikrarı', cruise.length > 30 ? 100 - Math.max(0, cv - 0.12) * 220 : null, `değişim katsayısı ${(cv * 100).toFixed(0)}%`, 'Düz yolda gereksiz hız dalgalanması.', 1);
@@ -251,7 +283,7 @@ export function computeSession(inp: ScoreInput): SessionResult {
     add('objectives', 'gorev', 'Görev hedefleri', o.total ? pct(o.done, o.total) * 100 - o.failed * 20 : null, `${o.done}/${o.total} tamamlandı`, 'Seçilen görevin adımları.', 3);
   }
   add('route', 'gorev', 'Rota uyumu', 100 - st.reroutes * 12, `${st.reroutes} sapma`, 'Navigasyon rotasından sapma sayısı.', 1.5);
-  add('resets', 'gorev', 'Araç sıfırlama', 100 - st.resets * 25, `${st.resets} sıfırlama`, 'R ile sıfırlama gerçek sürüşte mümkün değildir.', 1);
+  add('resets', 'gorev', 'Araç sıfırlama', 100 - st.resets * 25, `${st.resets} sıfırlama`, 'Aracı sıfırlama gerçek sürüşte mümkün değildir.', 1);
 
   // ——— Components ———
   const components = {} as Record<Component, number>;
@@ -316,6 +348,11 @@ export function computeSession(inp: ScoreInput): SessionResult {
     objectives: 'Görev yönergelerini ve navigasyon talimatlarını takip edin.',
     route: 'Navigasyon talimatını erken okuyun ve dönüş şeridine zamanında geçin.',
     resets: 'Hata sonrası aracı sıfırlamak yerine güvenle geri manevra yapmayı deneyin.',
+    highway: 'Bölünmüş yolda sağ şeridi kullanın; sollamayı soldan yapın ve emniyet şeridine girmeyin.',
+    roundabout: 'Göbekli kavşakta içerideki araca yol verin ve çıkacağınız yoldan önce sağ sinyal verin.',
+    zone_rules: 'Okul ve hastane bölgesinde 30, çarşıda 20 km/h sınırına uyun; bu bölgelerde korna çalmayın.',
+    emergency: 'Sireni duyduğunuzda aynaya bakın, sağa yanaşın ve geçmesine izin verin.',
+    lane_keeping: 'Bakışınızı uzağa, şeridin ortasına yöneltin; direksiyona küçük ve yumuşak düzeltmeler yapın.',
   };
   for (const s of weak) {
     if (TIP[s.id]) tips.push(TIP[s.id]);

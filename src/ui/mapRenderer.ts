@@ -1,4 +1,4 @@
-import type { RoadNetwork } from '../world/roadNetwork';
+import { ARM_VEC, DIRS, type RoadNetwork } from '../world/roadNetwork';
 import type { Landmark } from '../world/mapDefs';
 
 export type MapDynamic = {
@@ -22,6 +22,9 @@ const DISTRICT_COLOR: Record<string, string> = {
   hospital: '#4d4050',
   mosque: '#4b4a3a',
   campus: '#34503f',
+  farm: '#3d4a2c',
+  forest: '#24391f',
+  fuel: '#4a4540',
 };
 
 /** Pre-rendered top-down map + dynamic overlays for the minimap, big map and cockpit screen. */
@@ -35,7 +38,7 @@ export class MapRenderer {
   constructor(net: RoadNetwork) {
     const ext = net.map.extent;
     this.landmarks = net.map.landmarks;
-    this.scale = 1.4;
+    this.scale = Math.min(1.4, 3400 / Math.max(ext.maxX - ext.minX, ext.maxZ - ext.minZ));
     this.minX = ext.minX;
     this.minZ = ext.minZ;
     const w = Math.ceil((ext.maxX - ext.minX) * this.scale);
@@ -54,7 +57,7 @@ export class MapRenderer {
     }
     g.fillStyle = '#5b6068';
     for (const s of net.sidewalks) g.fillRect(X(s.minX), Z(s.minZ), (s.maxX - s.minX) * this.scale, (s.maxZ - s.minZ) * this.scale);
-    const roadColor: Record<string, string> = { boulevard: '#c9ccd2', avenue: '#b8bcc4', street: '#9ea3ab', oneway: '#9ea3ab', residential: '#8a8f97' };
+    const roadColor: Record<string, string> = { highway: '#e0b84f', boulevard: '#c9ccd2', avenue: '#b8bcc4', street: '#9ea3ab', oneway: '#9ea3ab', residential: '#8a8f97' };
     for (const e of net.edges) {
       g.fillStyle = roadColor[e.cls];
       const hw = e.halfWidth;
@@ -62,7 +65,46 @@ export class MapRenderer {
       else g.fillRect(X(e.x0), Z(e.z0 - hw), (e.x1 - e.x0) * this.scale, hw * 2 * this.scale);
     }
     for (const n of net.nodes) {
-      g.fillStyle = '#b3b7bf';
+      if (n.kind === 'bend') {
+        const arms = DIRS.filter((d) => n.arms[d]);
+        const e = n.arms[arms[0]]!;
+        const p0 = { x: n.x + ARM_VEC[arms[0]][0] * n.radius, z: n.z + ARM_VEC[arms[0]][1] * n.radius };
+        const p1 = { x: n.x + ARM_VEC[arms[1]][0] * n.radius, z: n.z + ARM_VEC[arms[1]][1] * n.radius };
+        const a0 = Math.atan2(p0.z - n.cz, p0.x - n.cx);
+        const a1 = Math.atan2(p1.z - n.cz, p1.x - n.cx);
+        let d = a1 - a0;
+        while (d > Math.PI) d -= Math.PI * 2;
+        while (d < -Math.PI) d += Math.PI * 2;
+        g.strokeStyle = roadColor.highway;
+        g.lineWidth = e.halfWidth * 2 * this.scale;
+        g.beginPath();
+        g.arc(X(n.cx), Z(n.cz), n.radius * this.scale, a0, a0 + d, d < 0);
+        g.stroke();
+        continue;
+      }
+      if (n.kind === 'roundabout') {
+        g.fillStyle = '#b3b7bf';
+        for (const d of DIRS) {
+          const e = n.arms[d];
+          if (!e) continue;
+          const v = ARM_VEC[d];
+          const w = e.halfWidth;
+          const x0 = Math.min(n.x + v[0] * n.hx, n.x) - (v[0] === 0 ? w : 0);
+          const x1 = Math.max(n.x + v[0] * n.hx, n.x) + (v[0] === 0 ? w : 0);
+          const z0 = Math.min(n.z + v[1] * n.hz, n.z) - (v[1] === 0 ? w : 0);
+          const z1 = Math.max(n.z + v[1] * n.hz, n.z) + (v[1] === 0 ? w : 0);
+          g.fillRect(X(x0), Z(z0), (x1 - x0) * this.scale, (z1 - z0) * this.scale);
+        }
+        g.beginPath();
+        g.arc(X(n.x), Z(n.z), n.ringOuter * this.scale, 0, Math.PI * 2);
+        g.fill();
+        g.fillStyle = '#2f5b35';
+        g.beginPath();
+        g.arc(X(n.x), Z(n.z), n.radius * this.scale, 0, Math.PI * 2);
+        g.fill();
+        continue;
+      }
+      g.fillStyle = n.highway ? '#d7b453' : '#b3b7bf';
       g.fillRect(X(n.x - n.hx), Z(n.z - n.hz), n.hx * 2 * this.scale, n.hz * 2 * this.scale);
     }
     // one-way arrows

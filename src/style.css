@@ -819,7 +819,11 @@ input[type='range'] {
   margin: 0;
 }
 .bigmap {
-  width: 100%;
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  max-height: calc(100vh - 170px);
+  width: auto;
   height: auto;
   border-radius: 12px;
   cursor: crosshair;
@@ -1803,3 +1807,20 @@ input[type='range'] {
 #hud.interior .hint-bar {
   display: none;
 }
+
+.ztable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ztable th, .ztable td { text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.07); }
+.ztable th { color: var(--muted, #8894a3); font-weight: 600; }
+
+.bind-grid { display: grid; grid-template-columns: 1fr; gap: 4px; margin: 6px 0 10px; }
+.bind-group { margin-top: 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted, #8894a3); }
+.bind-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 10px; border-radius: 8px; background: rgba(255,255,255,0.03); }
+.bind-row small { display: block; font-size: 11px; }
+.bind-keys { display: flex; gap: 6px; }
+.kbtn { min-width: 64px; padding: 5px 10px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.07); color: inherit; font: 600 13px system-ui, sans-serif; cursor: pointer; }
+.kbtn:hover { border-color: #35a7ff; }
+.kbtn.empty { opacity: .45; }
+.kbtn.capturing { background: #35a7ff; color: #fff; border-color: #35a7ff; }
+
+.radio-cards.row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+@media (max-width: 720px) { .radio-cards.row3 { grid-template-columns: 1fr; } }

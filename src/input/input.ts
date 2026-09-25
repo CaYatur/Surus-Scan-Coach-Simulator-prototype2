@@ -1,6 +1,7 @@
 import { approach, clamp } from '../core/math';
 import { settings } from '../core/settings';
 import type { DriveControls } from '../vehicle/dynamics';
+import { actionsFor, bindings, type BindAction } from './bindings';
 
 export type GlanceTarget = 'none' | 'mirrorL' | 'mirrorR' | 'mirrorRear' | 'shoulderL' | 'shoulderR' | 'generic';
 
@@ -18,6 +19,17 @@ export type Action =
   | 'gearR'
   | 'gearN'
   | 'gearP'
+  | 'gearUp'
+  | 'gearDown'
+  | 'gear1'
+  | 'gear2'
+  | 'gear3'
+  | 'gear4'
+  | 'gear5'
+  | 'gear6'
+  | 'cruise'
+  | 'cruiseUp'
+  | 'cruiseDown'
   | 'help'
   | 'wipers'
   | 'hud'
@@ -37,26 +49,11 @@ export type FrameInput = {
   source: InputSource;
 };
 
-const KEY_ACTIONS: Record<string, Action> = {
-  KeyQ: 'signalL',
-  KeyE: 'signalR',
-  KeyG: 'hazard',
-  KeyL: 'lights',
-  KeyV: 'camera',
-  KeyR: 'reset',
-  Escape: 'pause',
-  KeyP: 'pause',
-  KeyM: 'map',
-  KeyJ: 'missions',
-  Digit1: 'gearD',
-  Digit2: 'gearR',
-  Digit3: 'gearN',
-  Digit4: 'gearP',
-  F1: 'help',
-  KeyI: 'wipers',
-  KeyU: 'hud',
-  KeyO: 'recenter',
-};
+/** Held (continuous) bindings — everything else is an edge-triggered action. */
+const CONTINUOUS = new Set<BindAction>(['throttle', 'brake', 'steerLeft', 'steerRight', 'handbrake', 'clutch', 'horn', 'mirrorL', 'mirrorR', 'mirrorRear', 'shoulder']);
+
+/** Keys the browser should not act on while driving. */
+const SWALLOW = new Set(['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'F1', 'Tab', 'PageUp', 'PageDown', 'Backspace']);
 
 /** Keyboard + mouse + gamepad / steering wheel unified into analog driving controls. */
 export class Input {
@@ -65,6 +62,7 @@ export class Input {
   private kbSteer = 0;
   private kbThrottle = 0;
   private kbBrake = 0;
+  private kbClutch = 0;
   private mouseDown = false;
   private mouseLook = { yaw: 0, pitch: 0 };
   private padPrev: boolean[] = [];
@@ -76,7 +74,7 @@ export class Input {
     window.addEventListener('keydown', (e) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'F1'].includes(e.code)) e.preventDefault();
+      if (SWALLOW.has(e.code) || actionsFor(e.code).length) e.preventDefault();
       if (!this.keys.has(e.code)) this.pressed.push(e.code);
       this.keys.add(e.code);
       this.lastActivity = performance.now();
@@ -118,43 +116,47 @@ export class Input {
     const s = settings.get();
     const actions = new Set<Action>();
     for (const code of this.pressed) {
-      const a = KEY_ACTIONS[code];
-      if (a) actions.add(a);
+      for (const a of actionsFor(code)) if (!CONTINUOUS.has(a)) actions.add(a as Action);
     }
     this.pressed = [];
 
     const k = this.keys;
+    const map = bindings();
+    const held = (a: BindAction) => map[a].some((c) => k.has(c));
     const legacy = s.scanMode === 'legacy';
     // ——— Keyboard analog emulation ———
-    const up = k.has('KeyW') || k.has('ArrowUp');
-    const down = k.has('KeyS') || k.has('ArrowDown');
-    const left = k.has('KeyA') || k.has('ArrowLeft');
-    const right = k.has('KeyD') || k.has('ArrowRight');
+    const up = held('throttle');
+    const down = held('brake');
+    const left = held('steerLeft');
+    const right = held('steerRight');
     const steerTarget = (left ? 1 : 0) - (right ? 1 : 0);
     const rate = steerTarget === 0 ? 4.2 : Math.sign(steerTarget) !== Math.sign(this.kbSteer) && this.kbSteer !== 0 ? 5 : 2.4 * s.keyboardSteerSpeed;
     this.kbSteer = approach(this.kbSteer, steerTarget, rate * dt);
-    // progressive pedal: holding W squeezes the throttle in over ~1 s (tap for gentle acceleration)
+    // progressive pedal: holding the key squeezes the throttle in over ~1 s (tap for gentle acceleration)
     this.kbThrottle = approach(this.kbThrottle, up ? 1 : 0, (up ? (this.kbThrottle < 0.5 ? 1.4 : 0.8) : 6) * dt);
     this.kbBrake = approach(this.kbBrake, down ? 1 : 0, (down ? 5 : 8) * dt);
-    const hbKey = k.has('KeyB') || (!legacy && k.has('Space'));
+    // clutch: pressed quickly, released gradually (like lifting a pedal)
+    this.kbClutch = approach(this.kbClutch, held('clutch') ? 1 : 0, (held('clutch') ? 8 : 2.2) * dt);
 
     const drive: DriveControls = {
       throttle: this.kbThrottle,
       brake: this.kbBrake,
       steer: this.kbSteer,
-      handbrake: hbKey ? 1 : 0,
+      handbrake: held('handbrake') ? 1 : 0,
+      clutch: this.kbClutch,
     };
-    let horn = k.has('KeyH');
+    let horn = held('horn');
     let active = k.size > 0 || this.mouseDown;
     let source: InputSource = this.lastSource;
 
     // ——— Glance keys ———
     let glance: GlanceTarget = 'none';
-    const shift = k.has('ShiftLeft') || k.has('ShiftRight');
-    if (k.has('KeyZ')) glance = shift ? 'shoulderL' : 'mirrorL';
-    else if (k.has('KeyC')) glance = shift ? 'shoulderR' : 'mirrorR';
-    else if (k.has('KeyX')) glance = 'mirrorRear';
-    if (legacy && (k.has('Space') || k.has('KeyF'))) glance = 'generic';
+    const shift = held('shoulder');
+    if (held('mirrorL')) glance = shift ? 'shoulderL' : 'mirrorL';
+    else if (held('mirrorR')) glance = shift ? 'shoulderR' : 'mirrorR';
+    else if (held('mirrorRear')) glance = 'mirrorRear';
+    // legacy single-key proxy: any look key counts as a generic "I checked" glance
+    if (legacy && glance !== 'none') glance = 'generic';
 
     // ——— Mouse free-look (springs back when released) ———
     if (!this.mouseDown) {
@@ -206,6 +208,7 @@ export class Input {
         drive.throttle = Math.max(drive.throttle, padThrottle);
         drive.brake = Math.max(drive.brake, padBrake);
       }
+      const manual = s.transmission === 'manual';
       if (btn(1)) drive.handbrake = 1;
       if (btn(0)) horn = true;
       if (edge(4)) actions.add('signalL');
@@ -214,11 +217,18 @@ export class Input {
       if (edge(3)) actions.add('camera');
       if (edge(8)) actions.add('map');
       if (edge(9)) actions.add('pause');
-      if (edge(12)) actions.add('lights');
-      if (edge(13)) actions.add('reset');
+      if (edge(12)) actions.add(manual ? 'gearUp' : 'lights');
+      if (edge(13)) actions.add(manual ? 'gearDown' : 'reset');
       if (edge(14)) actions.add('gearR');
-      if (edge(15)) actions.add('gearD');
+      if (edge(15)) actions.add(manual ? 'gearN' : 'gearD');
       if (edge(10)) actions.add('missions');
+      if (edge(11) && !legacy) actions.add('cruise');
+      // wheel sets with a clutch pedal: 4th axis if present
+      if (s.useWheelMapping && pad.axes.length > 4 && s.transmission === 'manual') {
+        const v = pad.axes[4] ?? 0;
+        const c = clamp(s.wheelPedalsInverted ? (1 - v) / 2 : (v + 1) / 2, 0, 1);
+        if (Math.abs(v) > 1e-4) drive.clutch = Math.max(drive.clutch, c);
+      }
       // Right stick → glances and free look
       if (!s.useWheelMapping) {
         const rx = pad.axes[2] ?? 0;
@@ -244,6 +254,7 @@ export class Input {
         brake: clamp(drive.brake, 0, 1),
         steer: clamp(drive.steer, -1, 1),
         handbrake: drive.handbrake,
+        clutch: clamp(drive.clutch, 0, 1),
       },
       glance: this.enabled ? glance : 'none',
       look,

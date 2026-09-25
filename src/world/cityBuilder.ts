@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { mulberry32, randRange, type Rng } from '../core/math';
+import { angleDiff, mulberry32, randRange, type Rng } from '../core/math';
 import type { MapDef } from './mapDefs';
 import {
   RoadNetwork,
@@ -12,6 +12,8 @@ import {
   type RoadNode,
 } from './roadNetwork';
 import { MeshBuilder } from './meshBuilder';
+import { dashed, edgeStripe, ep, quadUp, triUp, type Pt } from './roadGeometry';
+import { buildBend, buildGantry, buildHighwayEdge, buildPostBoard, buildRoundabout, edgeRectCrossings, highwayMarkings, type RoadBuild } from './highway';
 import { ColliderWorld } from './colliders';
 import { LAYER_DETAIL } from '../vehicle/cockpit';
 import { fillBlock, type BuildCtx, type MatKey, type PropInst, type TreeInst } from './buildings';
@@ -24,6 +26,7 @@ import {
   grassTexture,
   paverTexture,
   roofTexture,
+  limitSign,
   signAtlas,
   textTexture,
   tileRoofTexture,
@@ -41,38 +44,6 @@ function detail<T extends THREE.Object3D>(o: T): T {
 
 export type ParkingSlot = { x: number; z: number; heading: number; edge: RoadEdge; side: 1 | -1; along: number; occupied: boolean };
 export type SignalState = 'red' | 'yellow' | 'green' | 'redyellow' | 'off';
-
-type Pt = { x: number; y: number; z: number };
-
-/** Emits an upward-facing quad regardless of point order. */
-function quadUp(b: MeshBuilder, p0: Pt, p1: Pt, p2: Pt, p3: Pt) {
-  const ax = p1.x - p0.x;
-  const az = p1.z - p0.z;
-  const bx = p3.x - p0.x;
-  const bz = p3.z - p0.z;
-  const ny = az * bx - ax * bz;
-  if (ny >= 0) b.quad(p0, p1, p2, p3);
-  else b.quad(p0, p3, p2, p1);
-}
-
-function triUp(b: MeshBuilder, p0: Pt, p1: Pt, p2: Pt) {
-  const ny = (p1.z - p0.z) * (p2.x - p0.x) - (p1.x - p0.x) * (p2.z - p0.z);
-  if (ny >= 0) b.tri(p0, p1, p2);
-  else b.tri(p0, p2, p1);
-}
-
-/** Edge-local → world helper: s along x0→x1, l along edge.right. */
-function ep(e: RoadEdge, s: number, l: number, y: number): Pt {
-  return { x: e.x0 + e.dx * s + e.rx * l, y, z: e.z0 + e.dz * s + e.rz * l };
-}
-
-function edgeStripe(b: MeshBuilder, e: RoadEdge, s0: number, s1: number, l0: number, l1: number, y: number) {
-  quadUp(b, ep(e, s0, l0, y), ep(e, s1, l0, y), ep(e, s1, l1, y), ep(e, s0, l1, y));
-}
-
-function dashed(b: MeshBuilder, e: RoadEdge, s0: number, s1: number, l: number, w: number, dash: number, gap: number, y: number) {
-  for (let s = s0; s < s1; s += dash + gap) edgeStripe(b, e, s, Math.min(s + dash, s1), l - w / 2, l + w / 2, y);
-}
 
 type SignalHeadRef = { red: number[]; yellow: number[]; green: number[] };
 
@@ -177,6 +148,13 @@ export class CityWorld {
     this.build();
   }
 
+  /** Inside the built-up area (always true on maps without a town boundary). */
+  inTown(x: number, z: number): boolean {
+    const t = this.map.town;
+    if (!t) return true;
+    return x >= t.rect.minX && x <= t.rect.maxX && z >= t.rect.minZ && z <= t.rect.maxZ;
+  }
+
   // ————————————————————————————— materials —————————————————————————————
 
   private createMaterials(): CityMaterials {
@@ -225,6 +203,7 @@ export class CityWorld {
       water: std({ map: waterTexture(), roughness: 0.05, metalness: 0.3, transparent: true, opacity: 0.9 }),
       hedge: std({ color: 0x3f6b2f, roughness: 1 }),
       asphaltLot: std({ map: asp.map, roughness: 0.9 }),
+      field: std({ map: concreteTexture(), roughness: 1 }),
     };
     const lampHead = new THREE.MeshStandardMaterial({ color: 0xfff4dd, emissive: 0xffd9a0, emissiveIntensity: 0.2, roughness: 0.4 });
     const lightPool = new THREE.MeshBasicMaterial({
@@ -275,13 +254,20 @@ export class CityWorld {
 
     this.buildGround();
 
-    // Asphalt: edges + junction boxes
+    const lamps: PropInst[] = [];
+    const RB: RoadBuild = { road, marks, walk, curb, ctx, colliders: this.colliders, lamps, rng: this.rng, net };
+
+    // Asphalt: edges + junction boxes (bends and roundabouts have their own geometry)
     for (const e of net.edges) {
       const hw = e.halfWidth;
       if (e.axis === 'ns') road.flatRect(e.x0 - hw, e.x0 + hw, e.z0, e.z1, 0, 1 / 6);
       else road.flatRect(e.x0, e.x1, e.z0 - hw, e.z0 + hw, 0, 1 / 6);
     }
-    for (const n of net.nodes) road.flatRect(n.x - n.hx, n.x + n.hx, n.z - n.hz, n.z + n.hz, 0, 1 / 6);
+    for (const n of net.nodes) {
+      if (n.kind === 'junction') road.flatRect(n.x - n.hx, n.x + n.hx, n.z - n.hz, n.z + n.hz, 0, 1 / 6);
+      else if (n.kind === 'bend') buildBend(RB, n);
+      else buildRoundabout(RB, n);
+    }
     for (const c of this.map.sidewalkCuts) road.flatRect(c.minX, c.maxX, c.minZ, c.maxZ, 0.004, 1 / 6);
 
     // Sidewalks (raised) + curb stones
@@ -290,6 +276,12 @@ export class CityWorld {
     curb.setColor('#c9c6be');
     for (const e of net.edges) {
       const hw = e.halfWidth;
+      if (e.cls === 'highway') {
+        buildHighwayEdge(RB, e);
+        marks.setColor('#ffffff');
+        highwayMarkings(marks, e);
+        continue;
+      }
       for (const side of [-1, 1]) {
         const l0 = side * hw;
         const l1 = side * (hw + 0.22);
@@ -301,12 +293,12 @@ export class CityWorld {
       if (e.spec.medianRaised) this.buildMedian(ctx, e);
     }
     for (const n of net.nodes) this.buildNodeMarkings(marks, n);
+    this.buildGantriesAndBoards(RB);
 
     // Blocks
     for (const blk of net.blocks) fillBlock(ctx, blk, net.isOuterBlock(blk));
 
     // Roadside props
-    const lamps: PropInst[] = [];
     this.buildStreetProps(ctx, lamps);
     this.buildParking();
     this.buildSignals(ctx);
@@ -322,14 +314,14 @@ export class CityWorld {
 
     // Meshes
     const g = this.group;
-    g.add(road.toMesh(this.materials.asphalt));
-    g.add(marks.toMesh(this.materials.marking));
-    g.add(walk.toMesh(this.materials.sidewalk));
-    g.add(curb.toMesh(this.materials.byKey.concrete));
+    for (const m of road.toTiledMeshes(this.materials.asphalt, TILE * 2, { receive: true })) g.add(m);
+    for (const m of marks.toTiledMeshes(this.materials.marking, TILE * 2, { receive: true })) g.add(m);
+    for (const m of walk.toTiledMeshes(this.materials.sidewalk, TILE * 2, { receive: true })) g.add(m);
+    for (const m of curb.toTiledMeshes(this.materials.byKey.concrete, TILE * 2, { receive: true })) g.add(m);
     for (const k of Object.keys(builders) as MatKey[]) {
       const b = builders[k];
       if (b.empty) continue;
-      const cast = !['grass', 'paver', 'concrete', 'asphaltLot', 'water'].includes(k);
+      const cast = !['grass', 'paver', 'concrete', 'asphaltLot', 'water', 'field'].includes(k);
       for (const m of b.toTiledMeshes(this.materials.byKey[k], TILE, { cast, receive: true })) g.add(m);
     }
     for (const s of ctx.specials) g.add(s);
@@ -347,7 +339,7 @@ export class CityWorld {
 
   private buildGround() {
     const ext = this.map.extent;
-    const size = 5200;
+    const size = Math.max(ext.maxX - ext.minX, ext.maxZ - ext.minZ) + 4200;
     const geo = new THREE.PlaneGeometry(size, size, 1, 1);
     geo.rotateX(-Math.PI / 2);
     const uv = geo.getAttribute('uv') as THREE.BufferAttribute;
@@ -418,11 +410,16 @@ export class CityWorld {
     b.setColor('#ffffff');
     if (e.oneway !== 0) {
       const outer = (s.lanes * s.laneWidth) / 2;
+      const lanes = e.oneway === 1 ? e.lanesFwd : e.lanesBwd;
+      const solidLen = lanes[0] && isFinite(lanes[0].solidFromS) ? lanes[0].path.length - lanes[0].solidFromS : 0;
+      const [d0, d1] = e.oneway === 1 ? [3, L - solidLen] : [solidLen, L - 3];
       for (let i = 1; i < s.lanes; i++) {
         const l = -outer + i * s.laneWidth;
-        dashed(b, e, 18, L - 18, l, W, 3, 6, y);
-        edgeStripe(b, e, 1, 18, l - W / 2, l + W / 2, y);
-        edgeStripe(b, e, L - 18, L - 1, l - W / 2, l + W / 2, y);
+        dashed(b, e, d0, d1, l, W, 3, 6, y);
+        if (solidLen > 0) {
+          if (e.oneway === 1) edgeStripe(b, e, L - solidLen, L - 1, l - W / 2, l + W / 2, y);
+          else edgeStripe(b, e, 1, solidLen, l - W / 2, l + W / 2, y);
+        }
       }
       edgeStripe(b, e, 0, L, outer - 0.07, outer + 0.07, y);
       edgeStripe(b, e, 0, L, -outer - 0.07, -outer + 0.07, y);
@@ -442,11 +439,16 @@ export class CityWorld {
       }
       // lane dividers
       for (const side of [-1, 1]) {
+        const lanes = side === 1 ? e.lanesFwd : e.lanesBwd;
+        const solidLen = lanes[0] && isFinite(lanes[0].solidFromS) ? lanes[0].path.length - lanes[0].solidFromS : 0;
+        const [d0, d1] = side === 1 ? [3, L - solidLen] : [solidLen, L - 3];
         for (let i = 1; i < s.lanes; i++) {
           const l = side * (half + i * s.laneWidth);
-          dashed(b, e, 20, L - 20, l, W, 3, 6, y);
-          edgeStripe(b, e, 1, 20, l - W / 2, l + W / 2, y);
-          edgeStripe(b, e, L - 20, L - 1, l - W / 2, l + W / 2, y);
+          dashed(b, e, d0, d1, l, W, 3, 6, y);
+          if (solidLen > 0) {
+            if (side === 1) edgeStripe(b, e, L - solidLen, L - 1, l - W / 2, l + W / 2, y);
+            else edgeStripe(b, e, 1, solidLen, l - W / 2, l + W / 2, y);
+          }
         }
         const el = side * (s.parking > 0 ? outer : outer - 0.35);
         edgeStripe(b, e, 0, L, el - 0.07, el + 0.07, y);
@@ -478,7 +480,8 @@ export class CityWorld {
     const turns = new Set(lane.outs.map((c) => c.turn));
     if (!turns.size) return;
     const e = lane.edge;
-    if (e.spec.lanes < 2 && !lane.endNode.signalized) return;
+    if (lane.endNode.kind === 'bend') return;
+    if (e.spec.lanes < 2 && !lane.endNode.signalized && lane.endNode.kind !== 'roundabout') return;
     if (lane.path.length < 40) return;
     const p = { x: 0, z: 0, h: 0 };
     lane.path.sample(lane.stopS - 9, p);
@@ -556,14 +559,57 @@ export class CityWorld {
     }
   }
 
+  /** Overhead direction signs on the ring road and town entry / exit boards. */
+  private buildGantriesAndBoards(RB: RoadBuild) {
+    for (const e of this.net.edges) {
+      if (e.cls !== 'highway') continue;
+      for (const lanes of [e.lanesFwd, e.lanesBwd]) {
+        if (!lanes.length) continue;
+        const lane = lanes[0];
+        const n = lane.endNode;
+        if (!n.signalized || lane.path.length < 420) continue;
+        const outs = lanes.flatMap((l) => l.outs);
+        const lines: string[] = [];
+        const left = outs.find((c) => c.turn === 'L');
+        const straight = outs.find((c) => c.turn === 'S');
+        const right = outs.find((c) => c.turn === 'R');
+        if (left) lines.push(`← ${left.to.edge.name.toLocaleUpperCase('tr-TR')}`);
+        if (straight) lines.push('D-200 ↑');
+        if (right) lines.push(`${right.to.edge.name.toLocaleUpperCase('tr-TR')} →`);
+        if (!lines.length) continue;
+        const sLane = lane.path.length - 330;
+        buildGantry(RB, e, lane.dir === 1 ? sLane : e.length - sLane, (Math.sign(lane.lateral) || 1) as 1 | -1, lines);
+      }
+    }
+    const town = this.map.town;
+    if (!town) return;
+    for (const e of this.net.edges) {
+      if (e.cls === 'highway') continue;
+      for (const sc of edgeRectCrossings(e, town.rect)) {
+        for (const lanes of [e.lanesFwd, e.lanesBwd]) {
+          if (!lanes.length) continue;
+          const lane = lanes[0];
+          const side = Math.sign(lane.lateral) || 1;
+          const ahead = ep(e, sc + (lane.dir === 1 ? 5 : -5), 0, 0);
+          const entering = this.inTown(ahead.x, ahead.z);
+          const p = ep(e, sc, side * (e.halfWidth + SIDEWALK_W + 1.6), 0);
+          const faceH = lane.heading + Math.PI;
+          buildPostBoard(RB, p.x, p.z, faceH, town.name, 3.4, 1.1, entering ? '#f5d23a' : '#f1efe6', entering ? '#111111' : '#b71c1c');
+        }
+      }
+    }
+  }
+
   // ————————————————————————————— props —————————————————————————————
 
   private buildStreetProps(ctx: BuildCtx, lamps: PropInst[]) {
     const rng = this.rng;
     for (const e of this.net.edges) {
+      if (e.cls === 'highway') continue;
       const district = this.map.district(e.cx, e.cz);
+      const rural = !this.inTown(e.cx, e.cz);
       const leafy = district !== 'downtown' && district !== 'industrial';
-      const spacing = e.cls === 'boulevard' || e.cls === 'avenue' ? 30 : 36;
+      const spacing = rural ? 55 : e.cls === 'boulevard' || e.cls === 'avenue' ? 30 : 36;
       for (const side of [-1, 1] as const) {
         const off = side === 1 ? 0 : spacing / 2;
         for (let s = 10 + off; s < e.length - 8; s += spacing) {
@@ -573,7 +619,14 @@ export class CityWorld {
           lamps.push({ x: p.x, z: p.z, rot, y: CURB_H });
           this.colliders.add({ kind: 'circle', x: p.x, z: p.z, r: 0.18, tag: 'pole' });
         }
-        if (leafy) {
+        if (rural) {
+          // poplar rows along country roads
+          for (let s = 14 + off * 0.3; s < e.length - 12; s += 9) {
+            const p = ep(e, s, side * (e.halfWidth + SIDEWALK_W + 2.2), 0);
+            ctx.trees.push({ x: p.x, z: p.z, s: randRange(rng, 0.9, 1.25), kind: 'cypress', rot: rng() * 6, y: 0 });
+            this.colliders.add({ kind: 'circle', x: p.x, z: p.z, r: 0.3, tag: 'tree' });
+          }
+        } else if (leafy) {
           for (let s = 16 + off * 0.5; s < e.length - 12; s += 12) {
             if (e.zebras.some((z) => Math.abs(z - s) < 5)) continue;
             if (rng() < 0.2) continue;
@@ -584,7 +637,7 @@ export class CityWorld {
         }
       }
       // bus stop on larger roads
-      if ((e.cls === 'avenue' || e.cls === 'boulevard') && e.length > 100 && rng() < 0.6) {
+      if ((e.cls === 'avenue' || e.cls === 'boulevard') && !rural && e.length > 100 && rng() < 0.6) {
         const side = rng() < 0.5 ? -1 : 1;
         const s = e.length * 0.4;
         this.busStop(ctx, e, s, side);
@@ -616,7 +669,7 @@ export class CityWorld {
     const rng = this.rng;
     for (const e of this.net.edges) {
       const s = e.spec;
-      if (s.parking <= 0 || e.length < 30) continue;
+      if (s.parking <= 0 || e.length < 30 || !this.inTown(e.cx, e.cz)) continue;
       const district = this.map.district(e.cx, e.cz);
       const occ = district === 'downtown' ? 0.8 : district === 'commercial' ? 0.75 : district === 'suburb' ? 0.35 : district === 'park' ? 0.25 : 0.6;
       const outer = e.oneway !== 0 ? (s.lanes * s.laneWidth) / 2 : s.median / 2 + s.lanes * s.laneWidth;
@@ -690,41 +743,91 @@ export class CityWorld {
     atlas.texture.anisotropy = this.anisotropy;
     const placements = new Map<SignKind, THREE.Matrix4[]>();
     const poles: THREE.Matrix4[] = [];
-    const place = (kind: SignKind, x: number, z: number, faceH: number, y = CURB_H + 2.3) => {
+    const place = (kind: SignKind, x: number, z: number, faceH: number, base = CURB_H) => {
       const m = new THREE.Matrix4().compose(
-        new THREE.Vector3(x, y, z),
+        new THREE.Vector3(x, base + 2.3, z),
         new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), faceH),
         new THREE.Vector3(1, 1, 1)
       );
       let list = placements.get(kind);
       if (!list) placements.set(kind, (list = []));
       list.push(m);
-      poles.push(new THREE.Matrix4().makeTranslation(x - Math.sin(faceH) * 0.04, CURB_H, z - Math.cos(faceH) * 0.04));
+      poles.push(new THREE.Matrix4().makeTranslation(x - Math.sin(faceH) * 0.04, base, z - Math.cos(faceH) * 0.04));
       this.colliders.add({ kind: 'circle', x, z, r: 0.12, tag: 'pole' });
     };
-    const limitKind = (l: number): SignKind => (l <= 30 ? 'limit30' : l <= 50 ? 'limit50' : 'limit70');
+    const net = this.net;
+    const tmp = { x: 0, z: 0, h: 0 };
     for (const e of this.net.edges) {
+      const hwy = e.cls === 'highway';
+      const base = hwy ? 0 : CURB_H;
       for (const lanes of [e.lanesFwd, e.lanesBwd]) {
         if (!lanes.length) continue;
         const lane = lanes[0];
         const side = Math.sign(lane.lateral) || 1;
-        const sStart = lane.dir === 1 ? 7 : e.length - 7;
         const faceH = lane.heading + Math.PI;
-        if (e.length > 50) {
-          const p = ep(e, sStart, side * (e.halfWidth + 1.1), 0);
-          place(limitKind(e.limit), p.x, p.z, faceH);
-          if (e.zoneLabel) {
-            const p2 = ep(e, lane.dir === 1 ? 20 : e.length - 20, side * (e.halfWidth + 1.1), 0);
-            place('school', p2.x, p2.z, faceH);
+        const off = hwy ? e.halfWidth + 1.4 : e.halfWidth + 1.1;
+        const at = (sLane: number, extra = 0) => ep(e, lane.dir === 1 ? sLane : e.length - sLane, side * (off + extra), 0);
+        // Speed limit plates wherever the effective limit changes along the lane
+        let prev = -1;
+        let prevZone: string | null = null;
+        let lastPlaced = -1e9;
+        for (let sl = 7; sl < lane.path.length - 5; sl += 5) {
+          lane.path.sample(sl, tmp);
+          const lim = net.limitAt(tmp.x, tmp.z, e.limit, e.cls);
+          const cap = Math.min(lim.limit, net.vehicleLimit(tmp.x, tmp.z, lane, null, sl));
+          const zoneKey = lim.zone ? lim.zone.label : null;
+          if (cap !== prev && (sl === 7 ? e.length > 50 : sl - lastPlaced > 14)) {
+            const p = at(sl);
+            place(limitSign(cap), p.x, p.z, faceH, base);
+            lastPlaced = sl;
+            prev = cap;
+          } else if (cap !== prev && sl === 7) prev = cap;
+          if (zoneKey !== prevZone && lim.zone) {
+            const zk = lim.zone.kind;
+            const p = at(sl + 14);
+            if (zk === 'school') place('school', p.x, p.z, faceH, base);
+            else if (zk === 'hospital') place('hospital', p.x, p.z, faceH, base);
+            else if (zk === 'market') place('crosswalk', p.x, p.z, faceH, base);
+            if (lim.zone.noHorn) {
+              const p3 = at(sl + 24);
+              place('noHorn', p3.x, p3.z, faceH, base);
+            }
+          }
+          prevZone = zoneKey;
+        }
+        // Warnings ahead of special nodes
+        const n = lane.endNode;
+        const L = lane.path.length;
+        if (n.kind === 'bend' && L > 260) {
+          const conn = lane.outs[0];
+          const turnLeft = conn ? angleDiff(conn.to.heading, lane.heading) > 0 : false;
+          const p = at(L - 240);
+          place(turnLeft ? 'curveL' : 'curveR', p.x, p.z, faceH, base);
+        }
+        if (n.kind === 'roundabout' && L > 80) {
+          const p = at(L - 60);
+          place('roundaboutAhead', p.x, p.z, faceH, base);
+        }
+        if (n.signalized && hwy && L > 300) {
+          const p = at(L - 260);
+          place('signalAhead', p.x, p.z, faceH, base);
+        }
+        if (hwy && L > 500) {
+          for (let sl = 380; sl < L - 380; sl += 700) {
+            const p = at(sl);
+            place('emergencyLane', p.x, p.z, faceH, base);
           }
         }
         // Stop / yield at the end node
-        const n = lane.endNode;
         const ctl = n.control[lane.arm];
         if (ctl === 'stop' || ctl === 'yield') {
           const s = lane.dir === 1 ? lane.stopS + 0.8 : e.length - lane.stopS - 0.8;
           const p = ep(e, s, side * (e.halfWidth + 1.0), 0);
           place(ctl === 'stop' ? 'stop' : 'yield', p.x, p.z, faceH);
+          if (n.kind === 'roundabout') {
+            const p2 = ep(e, lane.dir === 1 ? lane.stopS - 4 : e.length - lane.stopS + 4, side * (e.halfWidth + 1.0), 0);
+            place('roundabout', p2.x, p2.z, faceH);
+          }
         }
         for (const zs of e.zebras) {
           const s = lane.dir === 1 ? zs - 3 : zs + 3;
@@ -986,7 +1089,8 @@ export class CityWorld {
     ];
     const p = { x: 0, z: 0, h: 0 };
     for (const lane of this.net.lanes) {
-      if (lane.edge.zoneLabel && lane.path.length > 50) {
+      const zc = lane.edge;
+      if (lane.path.length > 50 && this.net.zoneAt(zc.cx, zc.cz, [zc.cls])?.kind === 'school') {
         lane.path.sample(18, p);
         words[0].list.push({ ...p });
       }

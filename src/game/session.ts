@@ -17,6 +17,7 @@ import { missionById } from '../missions/catalog';
 import type { WorldBundle } from './worldBundle';
 import type { Hud } from '../ui/hud';
 import { audio } from '../audio/audio';
+import { actionKeys } from '../input/bindings';
 import type { TimeOfDay, Weather } from '../world/environment';
 import { TIME_LABEL, WEATHER_LABEL } from '../world/environment';
 import type { RenderPipeline } from '../render/pipeline';
@@ -95,6 +96,10 @@ export class Session implements MissionHost {
   private meterState: { label: string; v: number } | null = null;
   private stimText: string | null = null;
   private odometer = 0;
+  private zoneNotice: string | null = null;
+  private cruise = { on: false, set: 0, integ: 0 };
+  private lastStalls = 0;
+  private autoLightWanted: boolean | null = null;
   private pipeline: RenderPipeline;
   private camera: THREE.PerspectiveCamera;
   private input: Input;
@@ -374,10 +379,60 @@ export class Session implements MissionHost {
     if (a.has('missions')) this.ui.openMissionBoard();
     if (a.has('help')) this.ui.openHelp();
     if (a.has('reset')) this.resetCar();
-    if (a.has('gearD')) this.dyn.select('D');
-    if (a.has('gearR')) this.dyn.select('R');
-    if (a.has('gearN')) this.dyn.select('N');
-    if (a.has('gearP')) this.dyn.select('P');
+    if (s.transmission === 'manual') {
+      const shift = (t: number | 'up' | 'down') => {
+        const r = this.dyn.shiftManual(t, s.clutchAssist);
+        if (r === 'grind') {
+          this.hud.toast(`Vites girmedi — önce debriyaja basın (${actionKeys('clutch')})`, 'warn');
+          audio.cue('bad');
+        } else if (r === 'blocked') this.hud.toast('Geri vitese takmak için önce tamamen durun', 'warn');
+      };
+      if (a.has('gearUp')) shift('up');
+      if (a.has('gearDown')) shift('down');
+      for (let g = 1; g <= 6; g++) if (a.has(`gear${g}` as 'gear1')) shift(g);
+      if (a.has('gearD')) shift(1);
+      if (a.has('gearR')) shift(-1);
+      if (a.has('gearN') || a.has('gearP')) shift(0);
+    } else {
+      if (a.has('gearD')) this.dyn.select('D');
+      if (a.has('gearR')) this.dyn.select('R');
+      if (a.has('gearN')) this.dyn.select('N');
+      if (a.has('gearP')) this.dyn.select('P');
+    }
+    if (a.has('cruise')) {
+      if (this.cruise.on) {
+        this.cruise.on = false;
+        this.hud.toast('Hız sabitleyici kapalı');
+      } else if (this.dyn.kmh >= 30 && this.dyn.gearMode === 'D') {
+        this.cruise = { on: true, set: Math.round(this.dyn.kmh), integ: 0 };
+        this.hud.toast(`Hız sabitleyici: ${this.cruise.set} km/h${this.cruise.set > this.lastQ.limit + 3 ? ' — sınırın üzerinde!' : ''}`, this.cruise.set > this.lastQ.limit + 3 ? 'warn' : 'good');
+      } else this.hud.toast('Hız sabitleyici 30 km/h üzerinde, ileri viteste açılır', 'warn');
+    }
+    if (this.cruise.on && (a.has('cruiseUp') || a.has('cruiseDown'))) {
+      this.cruise.set = clamp(Math.round((this.cruise.set + (a.has('cruiseUp') ? 5 : -5)) / 5) * 5, 30, 130);
+      this.hud.toast(`Sabit hız: ${this.cruise.set} km/h`);
+    }
+  }
+
+  /** Cruise control: PI throttle to hold the set speed; brake / clutch / handbrake cancel it. */
+  private applyCruise(d: FrameInput['drive'], dt: number): FrameInput['drive'] {
+    const c = this.cruise;
+    if (!c.on) return d;
+    if (d.brake > 0.05 || d.handbrake > 0.5 || d.clutch > 0.5 || this.dyn.gearMode !== 'D') {
+      c.on = false;
+      this.hud.toast('Hız sabitleyici devre dışı');
+      return d;
+    }
+    const err = c.set / 3.6 - this.dyn.speed;
+    c.integ = clamp(c.integ + err * dt, -12, 12);
+    const thr = clamp(0.16 + err * 0.22 + c.integ * 0.035 + this.dyn.speed * 0.004, 0, 1);
+    return { ...d, throttle: Math.max(d.throttle, thr) };
+  }
+
+  private gearLabel(): string {
+    const d = this.dyn;
+    if (settings.get().transmission === 'manual') return d.gearMode === 'D' ? String(d.gear) : d.gearMode === 'P' ? 'N' : d.gearMode;
+    return d.gearMode === 'D' ? `D${d.gear}` : d.gearMode;
   }
 
   private toggleSignal(side: 'left' | 'right') {
@@ -393,7 +448,7 @@ export class Session implements MissionHost {
     near.lane.path.sample(Math.min(near.lane.path.length - 2, near.s), p);
     this.dyn.reset(p.x, p.z, p.h);
     this.monitor.registerReset(p.x, p.z);
-    this.hud.toast('Araç en yakın şeride alındı (R)', 'warn');
+    this.hud.toast(`Araç en yakın şeride alındı (${actionKeys('reset')})`, 'warn');
   }
 
   update(dtRaw: number) {
@@ -415,11 +470,11 @@ export class Session implements MissionHost {
 
     // ——— Physics (sub-stepped) ———
     const crashed = this.hardCrashAt >= 0;
-    const drive = crashed ? { throttle: 0, brake: 1, steer: 0, handbrake: 1 } : inp.drive;
+    const drive = crashed ? { throttle: 0, brake: 1, steer: 0, handbrake: 1, clutch: 1 } : this.applyCruise(inp.drive, dt);
     const steps = Math.ceil(dt / (1 / 120));
     const h = dt / steps;
     for (let i = 0; i < steps; i++) {
-      this.dyn.update(h, drive, { autoReverse: s.transmission === 'auto', speedSensitive: s.speedSensitiveSteering && inp.source === 'keyboard' });
+      this.dyn.update(h, drive, { mode: s.transmission, clutchAssist: s.clutchAssist, abs: s.abs, speedSensitive: s.speedSensitiveSteering && inp.source === 'keyboard' });
       this.resolveCollisions();
     }
     this.updatePlayerInfo();
@@ -437,8 +492,21 @@ export class Session implements MissionHost {
     if (Math.abs(targetY - this.rollingY) > 0.05 && Math.abs(this.dyn.speed) > 2) this.rig.shake = Math.max(this.rig.shake, 0.25);
     this.rollingY = damp(this.rollingY, targetY, 14, dt);
 
+    // stalled engine (manual gearbox without clutch assist)
+    if (this.dyn.stalls !== this.lastStalls) {
+      this.lastStalls = this.dyn.stalls;
+      this.monitor.emit('stall', this.dyn.x, this.dyn.z, `Motor stop etti — debriyaja basıp (${actionKeys('clutch')}) gaza dokunarak yeniden çalıştırın`);
+    }
+    // automatic headlights (dusk / night / rain)
+    if (s.autoLights) {
+      const want = b.env.nightFactor > 0.45 || b.env.wetness > 0.5;
+      if (want !== this.autoLightWanted) {
+        this.autoLightWanted = want;
+        this.lights.lights = want;
+      }
+    }
     // signal self-cancel after a completed turn
-    if (this.lights.signal !== 'none') {
+    if (this.lights.signal !== 'none' && s.autoSignalCancel) {
       const turned = angleDiff(this.dyn.heading, this.signalHeading);
       this.signalTurned = Math.max(this.signalTurned, Math.abs(turned));
       if (this.signalTurned > 1.0 && Math.abs(this.dyn.steerAngle) < 0.05) this.lights.signal = 'none';
@@ -483,6 +551,8 @@ export class Session implements MissionHost {
       lead: lead ? { gap: lead.gap, relSpeed: lead.relSpeed } : null,
       peds: pedsOnRoad,
       cars: b.traffic.cars,
+      horn: inp.horn,
+      emergency: b.traffic.emergencyNear(this.playerInfo, 90),
     });
     const headway = lead && this.dyn.kmh > 10 ? lead.gap / Math.max(0.1, Math.abs(this.dyn.speed)) : null;
     const ttc = lead && lead.relSpeed > 0.3 ? lead.gap / lead.relSpeed : null;
@@ -518,6 +588,15 @@ export class Session implements MissionHost {
       this.trail.push(this.dyn.x, this.dyn.z);
     }
 
+    // zone entry / exit notices
+    const zl = q.zone ? `${q.zone.label} — ${q.zone.limit} km/h${q.zone.noHorn ? ' · korna yasak' : ''}` : null;
+    if (zl !== this.zoneNotice) {
+      if (zl && q.zone && q.zone.kind !== 'rural') this.hud.toast(`⚠ ${zl}`, 'warn', 3200);
+      else if (zl && q.zone?.kind === 'rural' && this.zoneNotice === null) this.hud.toast(`Yerleşim yeri dışı — ${q.zone.limit} km/h`, 'info', 2600);
+      else if (!zl && this.zoneNotice) this.hud.toast(`Bölge sonu — sınır ${q.limit} km/h`, 'info', 2400);
+      this.zoneNotice = zl;
+    }
+
     // ——— Navigation & mission ———
     b.nav.update(dt, { x: this.dyn.x, z: this.dyn.z, heading: this.dyn.heading }, q, s.voiceNav);
     b.nav.guide.setVisible(s.routeGuideLine);
@@ -538,6 +617,35 @@ export class Session implements MissionHost {
     }
 
     this.renderFrame(dt, false);
+  }
+
+  private sirenInfo(): { dist: number; police: boolean } | null {
+    const em = this.bundle.traffic.emergencyNear(this.playerInfo, 170);
+    if (!em) return null;
+    return { dist: Math.hypot(em.x - this.dyn.x, em.z - this.dyn.z), police: em.type === 'police' };
+  }
+
+  private hintCache = { key: '', html: '' };
+  private hintLine(): string {
+    const s = settings.get();
+    const key = `${s.transmission}|${JSON.stringify(s.keyBindings)}|${s.scanMode}`;
+    if (this.hintCache.key === key) return this.hintCache.html;
+    const k = (a: Parameters<typeof actionKeys>[0]) => `<b>${actionKeys(a)}</b>`;
+    const parts = [
+      `${k('throttle')} gaz`,
+      `${k('brake')} fren`,
+      `${k('handbrake')} el freni`,
+      `${k('signalL')}/${k('signalR')} sinyal`,
+      `${k('mirrorL')}/${k('mirrorRear')}/${k('mirrorR')} ayna`,
+      s.transmission === 'manual' ? `${k('gearUp')}/${k('gearDown')} vites · ${k('clutch')} debriyaj` : s.transmission === 'selector' ? `${k('gearD')} D · ${k('gearR')} R` : '',
+      `${k('cruise')} sabitleyici`,
+      `${k('camera')} kamera`,
+      `${k('map')} harita`,
+      `${k('pause')} menü`,
+      `${k('help')} yardım`,
+    ].filter(Boolean);
+    this.hintCache = { key, html: parts.join(' · ') };
+    return this.hintCache.html;
   }
 
   private cornerSurfaces(): string[] {
@@ -594,6 +702,8 @@ export class Session implements MissionHost {
     }
     // AI vehicles (oriented boxes)
     for (const c of this.bundle.traffic.cars) {
+      // an emergency vehicle squeezing past on the left never rams the player
+      if (c.siren && c.passing > 0.2) continue;
       const mtv = obbOverlap(dyn.x, dyn.z, dyn.heading, d.width / 2, d.length / 2, c.x, c.z, c.heading, c.width / 2, c.length / 2);
       if (!mtv) continue;
       dyn.x += mtv.nx * mtv.depth;
@@ -670,7 +780,7 @@ export class Session implements MissionHost {
         kmh: this.dyn.kmh,
         rpm: this.dyn.rpm,
         redline: this.dyn.p.redline,
-        gearLabel: this.dyn.gearMode === 'D' ? `D${this.dyn.gear}` : this.dyn.gearMode,
+        gearLabel: this.gearLabel(),
         signalL: this.lights.signal === 'left' || this.lights.hazard,
         signalR: this.lights.signal === 'right' || this.lights.hazard,
         blinkOn: this.car.blinkOn,
@@ -708,6 +818,7 @@ export class Session implements MissionHost {
       blinking: this.lights.signal !== 'none' || this.lights.hazard,
       rain: b.env.wetness,
       interior: this.rig.isInterior,
+      siren: this.sirenInfo(),
     });
     if (frozen) return;
     this.updateHud(dt, glance);
@@ -727,7 +838,7 @@ export class Session implements MissionHost {
       hud.setCluster({
         kmh: this.dyn.kmh,
         limit: this.lastQ.limit ?? 50,
-        gear: this.dyn.gearMode === 'D' ? `D${this.dyn.gear}` : this.dyn.gearMode,
+        gear: this.gearLabel(),
         rpmFrac: this.dyn.rpm / this.dyn.p.redline,
         sigL: this.lights.signal === 'left' || this.lights.hazard,
         sigR: this.lights.signal === 'right' || this.lights.hazard,
@@ -736,7 +847,12 @@ export class Session implements MissionHost {
         handbrake: this.dyn.handbrakeOn,
         wipers: this.wipers,
         cam: CAMERA_LABEL[this.rig.mode],
+        cruise: this.cruise.on ? this.cruise.set : null,
+        engineOff: !this.dyn.engineOn,
+        abs: s.abs,
+        clutch: s.transmission === 'manual' ? 1 - this.dyn.clutchEngage : undefined,
       });
+      hud.setHints(this.hintLine());
       const last = this.telemetry.last();
       hud.setHeadway(last?.headway ?? null, b.env.wetness > 0.5);
       hud.setNav(b.nav.instruction);
@@ -782,7 +898,7 @@ export class Session implements MissionHost {
         route: b.nav.route?.line,
         cars: b.traffic.cars,
         markers: b.markerList(),
-      });
+      }, 110 + Math.min(200, this.dyn.kmh * 1.6));
     }
   }
 

@@ -21,22 +21,48 @@ Mutlak bir taban yol gerekirse: `VITE_BASE=/scan-coach/ npm run build`.
 ### İki harita
 | Harita | Amaç |
 |---|---|
-| **Merkez Şehir** (~1,3 km²) | Serbest sürüş + seçmeli görevler. Bulvarlar (refüjlü, 2+2 şerit), caddeler, tek yönlü yollar, park şeritli sokaklar, 30 km/h okul bölgesi, çarşı, meydan (saat kulesi, belediye), camiler, hastane, üniversite, sanayi, parklar. |
+| **Merkez Şehir** (~6 km², şehir çekirdeği ~1,6 km²) | Serbest sürüş + seçmeli görevler. Bulvarlar (refüjlü, 2+2 şerit), caddeler, tek yönlü yollar, park şeritli sokaklar, **iki göbekli kavşak**, meydan, camiler, hastane, üniversite, çarşı, sanayi, parklar. Şehri çevreleyen **~10 km'lik D-200 çevre yolu** (2×3 şerit, beton bariyer, emniyet şeridi, bariyerler, geniş virajlar, üst geçit tabelaları), şehir dışında tarlalar, çiftlikler, orman, akaryakıt istasyonu ve lojistik merkezi. |
 | **Eğitim Alanı** | Görev odaklı: kalibrasyon programı ve beceri atölyeleri. Işıklı bulvar, DUR levhalı sokak, park alanı (çizgili park yerleri, slalom). |
 
-Şehir tamamen bildirimsel harita tanımlarından (`src/world/mapDefs.ts`) üretilir: şerit grafiği, kavşak kontrolü (sinyalizasyon / DUR / yol ver), yaya geçitleri, bloklar, binalar ve donatılar.
+Şehir tamamen bildirimsel harita tanımlarından (`src/world/mapDefs.ts`) üretilir: şerit grafiği, kavşak kontrolü (sinyalizasyon / DUR / yol ver / göbekli kavşak), yaya geçitleri, bloklar, binalar ve donatılar.
+
+**Bölgesel hız sınırları** (levhalarla işaretli, bölgeye girince HUD uyarısı):
+
+| Bölge / yol | Sınır |
+|---|---|
+| Yaya öncelikli çarşı | 20 |
+| Sokak, okul bölgesi, hastane bölgesi (korna yasak), park çevresi, kampüs, göbekli kavşak | 30 |
+| Şehir merkezi (cadde/tek yön) | 40 |
+| Cadde | 50 |
+| Atatürk / Millet bulvarları | 60 |
+| Kuşak yolu bulvarları | 70 |
+| Yerleşim yeri dışı yollar | 90 |
+| D-200 bölünmüş çevre yolu (kavşak yaklaşımında 70, virajda 90) | 110 |
 
 ### Görevler
 - **Kalibrasyon:** 10 adımlı *Kalibrasyon Programı* (hızlanma, sola/sağa dönüş, şerit değişimi, tepki testi, DUR levhası, park) ve *Hızlı Kalibrasyon* (2 dk serbest). Kişisel sürüş profilini (stil parmak izi) çıkarır.
 - **Beceri:** Ayna–Sinyal–Manevra atölyesi, park etme, tepki testi serisi.
-- **Şehir:** Şehir turu, taksi (yolcu konforu), okul bölgesi (çocuk yaya olayı), yoğun saat (ani fren eden araç), gece sürüşü, yağmurlu yol, paralel park, bulvar şeritleri.
+- **Şehir:** Şehir turu, taksi (yolcu konforu), okul bölgesi (çocuk yaya olayı), yoğun saat (ani fren eden araç), gece sürüşü, yağmurlu yol, paralel park, bulvar şeritleri, **Çevre Yolu (D-200)** (bölünmüş yol, sollama, viraj), **Göbekli Kavşaklar**, **Hız Bölgeleri Turu**, **Ambulansa Yol Ver**.
 - Serbest sürüşte **J** ile görev panosunu açıp bulunduğun yerden görev başlatabilirsin; **M** ile haritadan tıklayarak hedef seçebilirsin.
 - Görev sonunda başarı/başarısızlık, yıldız (0–3), hedef listesi ve ölçüm satırları (ör. tepki süresi, park hizası) gösterilir.
 
 ### Sürüş ve araç
-- Bisiklet modeli + lastik tutuş limiti (yağmurda azalır), tork eğrisi, 6 ileri otomatik şanzıman, ABS'li fren, el freni, otomatik D/R veya vites seçici (P/R/N/D).
-- Klavye (analog benzetimli), **gamepad** ve **direksiyon seti** (eksen eşleme + otomatik algılama sihirbazı).
-- Prosedürel araç modelleri: hatchback, sedan, SUV, hafif ticari, taksi, otobüs, kamyon (yuvarlatılmış kaporta, jant, far/stop/sinyal lambaları).
+- Bisiklet modeli + lastik tutuş limiti (yağmurda azalır), tork eğrisi, el freni.
+- **Kontrol ön ayarları** (Ayarlar → Kontroller):
+  - **Kolay:** otomatik şanzıman (fren tuşuyla durup basılı tutunca geri vitese geçer), ABS, otomatik far, sinyal otomatik kapanır, hıza duyarlı direksiyon.
+  - **Gelişmiş:** **manuel şanzıman + debriyaj** (vites 1–6 / R / N, sıralı vites yükselt-düşür; debriyaj yardımı kapalıysa vites debriyajsız girmez ve **motor stop edebilir**), fren yalnızca frendir, farlar elle.
+  - **Özel:** şanzıman (otomatik / vites seçici P-R-N-D / manuel), debriyaj yardımı, ABS (kapalıyken sert frende tekerlek kilitlenir), otomatik far, otomatik sinyal kapanması ayrı ayrı.
+- **Hız sabitleyici** (K, =/− ile ±5 km/h; fren/debriyaj/el freni iptal eder).
+- **Tüm tuşlar yeniden atanabilir** (tıkla → yeni tuşa bas); yardım ekranı ve alt ipucu çubuğu atamalara göre güncellenir.
+- Klavye (analog benzetimli), **gamepad** ve **direksiyon seti** (eksen eşleme + otomatik algılama sihirbazı; manuel modda 5. eksen debriyaj pedalı).
+- Prosedürel araç modelleri: hatchback, sedan, station wagon, SUV, pikap, hafif ticari, taksi, dolmuş/minibüs, otobüs, kamyon, **TIR (çekici + dorse, virajda dorse gerçekçi şekilde içeriden döner)**, motosiklet (kurye), **polis** ve **ambulans** (tepe lambaları + siren).
+
+### Trafik (botlar)
+- IDM araç takibi; bölge hız sınırlarına uyar (ağır vasıtalar en fazla 85 km/h ve sağ şeritlerde kalır).
+- Çok şeritli yollarda **sinyal vererek şerit değiştirir**: yavaş aracı soldan sollar, sonra sağa döner (bölünmüş yolda sağdan gitme kuralı); kavşak yaklaşımındaki düz çizgide şerit değiştirmez.
+- Işık, DUR, yol ver kurallarına ve **göbekli kavşakta içerideki araca** yol verir; dönüşlerde ve göbekten çıkarken sinyal verir.
+- **Sirenli ambulans/polis** zaman zaman arkadan gelir (Ayarlar → Koçluk ile kapatılabilir); diğer araçlar sağa geçer veya kenara yanaşır, acil araç engeli soldan geçer.
+- Yol tipine göre araç karışımı (çevre yolunda TIR/kamyon, merkezde taksi/dolmuş/motosiklet).
 
 ### İç mekân ve kameralar
 6 kamera modu (**V**): sürücü koltuğu, eğitmen koltuğu, kaput, yakın/uzak takip, kuşbakışı.
@@ -47,20 +73,21 @@ Kokpitte canlı analog göstergeler, gerçekten dönen direksiyon ve eller, vite
 |---|---|
 | **Bakış tuşları + sinyal** (varsayılan) | Z sol ayna, C sağ ayna, X iç dikiz, Shift+Z/C omuz kontrolü. Sürücünün başı gerçekten o yöne döner; bakış hedefe ulaşınca "kontrol" sayılır. |
 | **Webcam kafa takibi** | MediaPipe Face Landmarker ile kafanı çevirerek aynalara bak. Görüntü cihazda işlenir; model ilk kullanımda CDN'den indirilir. |
-| **Tek tuş (eski)** | Space/F = yön ayırt etmeyen tarama proxy'si (referans prototip ile uyumluluk). |
+| **Tek tuş (eski)** | Bakış tuşlarından herhangi biri = yön ayırt etmeyen tarama proxy'si (referans prototip ile uyumluluk). |
 
 ### Koçluk motoru
 Canlı olay tespiti (`src/coach/monitor.ts`):
 - **Manevralar:** şerit değişimi ve dönüşlerde *Ayna → Sinyal → Omuz → Manevra* sırası, geç/ters sinyal, açık unutulan sinyal, yanlış şeritten dönüş.
-- **Kurallar:** hız bölgeleri (okul bölgesi toleransı daha dar), kırmızı ve riskli sarı ışık, DUR levhasında tam duruş, geçiş önceliği, yaya geçidinde yol verme, ters yön, kaldırım/refüj, gece far kullanımı.
+- **Yanlış pozitife dayanıklı şerit değişimi:** araç çizgiyi geçtiği an hazırlık (ayna/sinyal/omuz) kaydedilir, ama şerit değişimi ancak araç yeni şeride yerleşince (≈0,8 sn + çizgiden ≥0,9 m içeride) sayılır. Aracı dengelemek için yapılan küçük sağ-sol düzeltmeler veya çizgiye yaklaşıp geri dönmek şerit değişimi sayılmaz; iki kolu olan köşelerde ve çevre yolu virajlarında dönüş sinyali aranmaz.
+- **Kurallar:** bölgeye göre hız (okul/hastane/çarşıda 3 km/h, diğer yollarda %10 tolerans), kırmızı ve riskli sarı ışık, DUR levhasında tam duruş, geçiş önceliği, yaya geçidinde yol verme, ters yön, kaldırım/refüj, gece far kullanımı, **düz çizgide şerit değiştirme**, **zikzak (sık şerit değiştirme)**, **emniyet şeridinde seyir**, **sağdan sollama**, **sol şeridi gereksiz işgal**, bölünmüş yolda **trafiği engelleyen yavaş seyir**, **korna yasağı** (okul/hastane), **kavşağı tıkama**, **göbekli kavşakta yol vermeme / çıkışta sinyal vermeme**, **sirenli araca yol vermeme**, motor stop etme (manuel).
 - **Güvenlik:** araç/nesne/yaya çarpışmaları (şiddete göre), ramak kala (TTC), takip mesafesi (2 sn, yağmurda 4 sn), sert fren/hızlanma/viraj, tepki süresi.
 - **Tarama:** ayna kontrol sıklığı, en uzun aynasız süre, kontrolsüz kavşaklarda yan tarama, girdi boşlukları (dikkat proxy'si).
-- **Pürüzsüzlük:** jerk RMS, boylamsal/yanal konfor, direksiyon düzeltme oranı (SRR), hız istikrarı.
+- **Pürüzsüzlük:** jerk RMS, boylamsal/yanal konfor, direksiyon düzeltme oranı (SRR), hız istikrarı, **şerit ortalama (şerit içi sapma RMS)**.
 
 Puanlama 5 bileşen: **Güvenlik %30 · Kural %25 · Tarama %20 · Pürüzsüzlük %15 · Görev %10**. Kısa oturumlar düşük güvenle nötre çekilir; ağır ihlaller toplam puana tavan koyar.
 
 ### Rapor ve karne
-- Rapor sekmeleri: özet (5 eksen + radar, koç önerileri, güçlü yönler), olay zaman çizelgesi, hız renkli rota haritası, hız/ivme/takip mesafesi grafikleri, tüm alt metrikler, kişisel profil karşılaştırması.
+- Rapor sekmeleri: özet (5 eksen + radar, koç önerileri, güçlü yönler), olay zaman çizelgesi, hız renkli rota haritası, hız/ivme/takip mesafesi grafikleri, tüm alt metrikler (bölünmüş yol kuralları, göbekli kavşak, özel bölgeler, geçiş üstünlüğü dahil), **bölge bazında hız uyum tablosu**, kişisel profil karşılaştırması.
 - Dışa aktarma: bağımsız HTML rapor, 10 Hz telemetri CSV, oturum JSON.
 - Karne: EWMA ile güncellenen genel not ve 5 eksen, gelişim grafiği, rozetler, son oturumlar, kişisel sürüş profili; profiller JSON olarak dışa/içe aktarılabilir.
 
@@ -68,21 +95,23 @@ Puanlama 5 bileşen: **Güvenlik %30 · Kural %25 · Tarama %20 · Pürüzsüzl�
 Gökyüzü + güneş/ay, gölgeler, PBR malzemeler, ortam yansımaları, bloom, FXAA/SMAA, zaman (sabah/öğle/gün batımı/gece) ve hava (açık/bulutlu/yağmur/sis). Gece aydınlatılmış pencereler, sokak lambası ışık havuzları ve gerçek far ışıkları.
 **Kalite ön ayarları** (Düşük/Orta/Yüksek/Ultra) ilk açılışta GPU'ya göre otomatik önerilir.
 
-## Kontroller
+## Kontroller (varsayılan — hepsi Ayarlar → Kontroller'den değiştirilebilir)
 
 | Tuş | İşlev | Tuş | İşlev |
 |---|---|---|---|
-| W / ↑ | Gaz | Z / C / X | Sol / sağ / iç dikiz ayna |
-| S / ↓ | Fren (durunca basılı: geri) | Shift+Z / Shift+C | Omuz kontrolü |
-| A / D | Direksiyon | Q / E | Sinyal |
-| Space / B | El freni | G | Dörtlü flaşör |
-| 1–4 | Vites D/R/N/P | L | Farlar |
-| V | Kamera | I | Silecek |
-| M | Harita / hedef seç | J | Görev panosu |
-| R | Aracı şeride al | U | HUD modu |
-| Esc / P | Duraklat | F1 | Yardım |
+| W / ↑ | Gaz | Z / X / C | Sol ayna / iç dikiz / sağ ayna |
+| S / ↓ | Fren (Kolay modda durunca basılı: geri) | Shift + Z / C | Omuz kontrolü |
+| A / D, ← / → | Direksiyon | Q / E | Sol / sağ sinyal |
+| Boşluk | El freni | G | Dörtlü flaşör |
+| H | Korna | L / I | Farlar / silecek |
+| F / R / N / P | Vites D / R / N / P (vites seçici) | K, = / − | Hız sabitleyici, ±5 km/h |
+| 1–6, PgUp/PgDn ( ] / [ ) | Manuel vites | B | Debriyaj (manuel, yardım kapalı) |
+| V | Kamera | M | Harita / hedef seç |
+| J / Tab | Görev panosu | U | HUD modu |
+| ⌫ Geri | Aracı şeride al | Esc | Duraklat |
+| F1 | Yardım | O | Kafa takibini merkezle |
 
-Gamepad: sol çubuk direksiyon, RT gaz, LT fren, B el freni, LB/RB sinyal, sağ çubuk ayna/omuz bakışı, Y kamera.
+Gamepad: sol çubuk direksiyon, RT gaz, LT fren, B el freni, LB/RB sinyal, sağ çubuk ayna/omuz bakışı, Y kamera, X dörtlü, R3 hız sabitleyici; manuel modda D-pad ↑/↓ vites.
 
 ## Proje yapısı
 

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { formatDistance } from '../core/math';
 import type { RoadNetwork, RoadQuery } from '../world/roadNetwork';
-import { findRoute, type Route } from './routing';
+import { findRoute, roundaboutExit, type Route } from './routing';
 
 export type NavInstruction = { arrow: 'L' | 'R' | 'S' | 'U' | ''; dist: number; text: string; street: string };
 
@@ -97,7 +97,13 @@ export class Navigator {
     const last = i >= r.steps.length - 1;
     const turn = r.steps[i].turnAtEnd;
     const street = last ? r.destName : r.steps[i + 1]?.edge.name ?? '';
-    const verb = last ? 'Hedef' : turn === 'L' ? 'Sola dönün' : turn === 'R' ? 'Sağa dönün' : 'Düz devam edin';
+    let verb = last ? 'Hedef' : turn === 'L' ? 'Sola dönün' : turn === 'R' ? 'Sağa dönün' : 'Düz devam edin';
+    const node = r.steps[i].to;
+    if (!last && node.kind === 'roundabout') {
+      const inArm = this.net.armOf(node, r.steps[i].edge);
+      const outArm = this.net.armOf(node, r.steps[i + 1].edge);
+      if (inArm && outArm) verb = `Göbekli kavşakta ${roundaboutExit(node, inArm, outArm)}. çıkıştan çıkın`;
+    }
     this.instruction = {
       arrow: last ? 'S' : turn === 'L' ? 'L' : turn === 'R' ? 'R' : 'S',
       dist: last ? dd : dist,

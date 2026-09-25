@@ -34,7 +34,12 @@ export type MonitorFrame = {
   lead: { gap: number; relSpeed: number } | null;
   peds: Pedestrian[];
   cars: AICar[];
+  horn: boolean;
+  /** Nearest emergency vehicle with siren (if any). */
+  emergency: { id: number; x: number; z: number; heading: number; v: number } | null;
 };
+
+export type ZoneStat = { time: number; over: number; maxOver: number; limit: number };
 
 export type ManeuverStats = { total: number; signaled: number; mirror: number; shoulder: number };
 
@@ -71,6 +76,21 @@ export type MonitorStats = {
   nightNoLightsTime: number;
   idleGaps: number;
   signalOnTime: number;
+  shoulderTime: number;
+  rightOvertakes: number;
+  leftLaneHog: number;
+  tooSlow: number;
+  solidLine: number;
+  weaving: number;
+  hornViolations: number;
+  junctionBlocks: number;
+  roundabouts: { total: number; exitSignal: number; yieldFail: number };
+  highwayTime: number;
+  highwayDistance: number;
+  laneKeepSq: number;
+  laneKeepN: number;
+  zones: Record<string, ZoneStat>;
+  emergency: { total: number; yielded: number };
 };
 
 function emptyStats(): MonitorStats {
@@ -108,8 +128,26 @@ function emptyStats(): MonitorStats {
     nightNoLightsTime: 0,
     idleGaps: 0,
     signalOnTime: 0,
+    shoulderTime: 0,
+    rightOvertakes: 0,
+    leftLaneHog: 0,
+    tooSlow: 0,
+    solidLine: 0,
+    weaving: 0,
+    hornViolations: 0,
+    junctionBlocks: 0,
+    roundabouts: { total: 0, exitSignal: 0, yieldFail: 0 },
+    highwayTime: 0,
+    highwayDistance: 0,
+    laneKeepSq: 0,
+    laneKeepN: 0,
+    zones: {},
+    emergency: { total: 0, yielded: 0 },
   };
 }
+
+/** Sensitive zones get a tighter speed tolerance and stronger feedback. */
+const SENSITIVE = new Set(['school', 'hospital', 'market']);
 
 type Approach = {
   node: RoadNode;
@@ -131,6 +169,22 @@ type JunctionEntry = {
   signalSince: number;
   mirrorL: boolean;
   mirrorR: boolean;
+  rbYieldFail: boolean;
+};
+
+/** Lane-keeping state with hysteresis: a lane change is only counted once it is clearly completed. */
+type LaneTrack = {
+  edge: number;
+  dir: number;
+  committed: number;
+  cand: number;
+  candT: number;
+  side: 'left' | 'right';
+  sig: 'ok' | 'late' | 'none' | 'wrong';
+  mirror: boolean;
+  shoulder: boolean;
+  solid: boolean;
+  lead: number;
 };
 
 /** Watches the drive every frame and turns it into coaching events + statistics. */
@@ -149,8 +203,8 @@ export class DrivingMonitor {
   private cool = new Map<string, number>();
   private t = 0;
   // state
-  private lane: { edge: number; dir: number; index: number; since: number } | null = null;
-  private laneChangeT = -99;
+  private lk: LaneTrack | null = null;
+  private laneChangeTimes: number[] = [];
   /** When we entered the current edge (lane settling after a junction is not a lane change). */
   private edgeEnterT = -99;
   private signalState: { side: 'none' | 'left' | 'right'; since: number; maneuverDone: boolean; doneT: number } = { side: 'none', since: 0, maneuverDone: false, doneT: 0 };
@@ -173,6 +227,14 @@ export class DrivingMonitor {
   private conflictPeds = new Set<number>();
   private lastImpactT = -99;
   private recentKmh: { t: number; kmh: number; x: number; z: number }[] = [];
+  private shoulderT = 0;
+  private hogT = 0;
+  private slowT = 0;
+  private blockT = 0;
+  private lastRightSignalT = -99;
+  private relPos = new Map<number, number>();
+  private emergencySeen = new Map<number, { t: number; ok: boolean; judged: boolean }>();
+  private zoneKey: string | null = null;
 
   constructor(net: RoadNetwork, signals: SignalController | null) {
     this.net = net;
@@ -185,7 +247,12 @@ export class DrivingMonitor {
     this.scan.reset();
     this.cool.clear();
     this.t = 0;
-    this.lane = null;
+    this.lk = null;
+    this.laneChangeTimes = [];
+    this.relPos.clear();
+    this.emergencySeen.clear();
+    this.shoulderT = this.hogT = this.slowT = this.blockT = 0;
+    this.zoneKey = null;
     this.approach = null;
     this.junction = null;
     this.lastQ = null;
@@ -272,10 +339,14 @@ export class DrivingMonitor {
     this.recentKmh.push({ t: f.t, kmh: f.kmh, x: f.x, z: f.z });
     while (this.recentKmh.length && f.t - this.recentKmh[0].t > 12) this.recentKmh.shift();
 
+    if (f.signal === 'right') this.lastRightSignalT = f.t;
     this.trackSignal(f);
     this.trackLanes(f);
     this.trackApproachAndJunction(f);
     this.trackSpeed(f);
+    this.trackHighway(f);
+    this.trackZoneRules(f);
+    this.trackEmergency(f);
     this.trackSurface(f);
     this.trackDynamics(f);
     this.trackFollowing(f);
@@ -313,57 +384,102 @@ export class DrivingMonitor {
   private trackLanes(f: MonitorFrame) {
     const q = f.q;
     if (q.kind !== 'road' || !q.edge || q.laneIndex < 0) {
-      if (q.kind !== 'parking') this.lane = null;
+      if (q.kind !== 'parking' && q.kind !== 'shoulder') this.lk = null;
+      this.straddleT = 0;
       return;
     }
-    this.lastRoadLane = { index: q.laneIndex, lanes: q.edge.spec.lanes, t: f.t };
-    const dirLanes = q.edge.oneway !== 0 ? q.edge.spec.lanes : q.edge.spec.lanes;
-    const cur = { edge: q.edge.id, dir: q.travelDir, index: q.laneIndex, since: f.t };
-    const prev = this.lane;
-    this.lane = cur;
-    if (!prev || prev.edge !== cur.edge || prev.dir !== cur.dir) {
-      if (!prev || prev.edge !== cur.edge) this.edgeEnterT = f.t;
+    const e = q.edge;
+    this.lastRoadLane = { index: q.laneIndex, lanes: e.spec.lanes, t: f.t };
+    const lanesInDir = e.spec.lanes;
+    if (!this.lk || this.lk.edge !== e.id || this.lk.dir !== q.travelDir) {
+      if (!this.lk || this.lk.edge !== e.id) this.edgeEnterT = f.t;
+      this.lk = { edge: e.id, dir: q.travelDir, committed: q.laneIndex, cand: -1, candT: 0, side: 'left', sig: 'none', mirror: false, shoulder: false, solid: false, lead: -1 };
       return;
     }
-    if (prev.index === cur.index) {
-      this.lane.since = prev.since;
-      // straddling the lane line (multi-lane only)
-      if (dirLanes >= 2 && q.lane && f.kmh > 15) {
-        const center = Math.abs(q.lane.lateral);
-        const off = Math.abs(Math.abs(q.lateral) - center);
-        if (off > q.lane.width / 2 - 0.3 && f.signal === 'none') {
-          this.straddleT += f.dt;
-          if (this.straddleT > 4) this.emit('lane_straddle', f.x, f.z, 'İki şerit arasında seyir — şeridinizi seçin', undefined, undefined, 'straddle', 20);
-        } else this.straddleT = 0;
+    const lk = this.lk;
+    const sLane = q.travelDir === 1 ? q.along : e.length - q.along;
+    // Settling after entering the edge (choosing a lane after a turn) and entering the next junction
+    if (f.t - this.edgeEnterT < 3.5 || sLane < 12 || e.length - sLane < 6 || q.wrongWay || f.kmh < 8) {
+      if (lk.cand < 0 || sLane < 12) lk.committed = q.laneIndex;
+      lk.cand = -1;
+      this.straddleT = 0;
+      return;
+    }
+    const lane = q.lane;
+    const offC = lane ? q.lateral - lane.lateral : 0;
+    const toLine = lane ? lane.width / 2 - Math.abs(offC) : 1;
+    // Straddling a lane line for a long time (multi-lane roads only)
+    if (lanesInDir >= 2 && f.kmh > 15 && toLine < 0.32 && f.signal === 'none') {
+      this.straddleT += f.dt;
+      if (this.straddleT > 4) this.emit('lane_straddle', f.x, f.z, 'İki şerit arasında seyir — şeridinizi seçin', undefined, undefined, 'straddle', 20);
+    } else this.straddleT = 0;
+
+    if (q.laneIndex === lk.committed) {
+      // back in the original lane: whatever happened was a correction, not a lane change
+      lk.cand = -1;
+      if (lane && f.kmh > 20) {
+        this.stats.laneKeepSq += offC * offC;
+        this.stats.laneKeepN++;
       }
       return;
     }
-    if (q.wrongWay || f.kmh < 8) return;
-    if (f.t - this.laneChangeT < 2) return; // debounce oscillation around the line
-    if (f.t - this.edgeEnterT < 3.5 || q.along < 12 || q.edge.length - q.along < 8) return; // settling after a turn
-    this.laneChangeT = f.t;
-    const side: 'left' | 'right' = cur.index > prev.index ? 'left' : 'right';
+    if (lk.cand !== q.laneIndex) {
+      // the car centre just crossed a lane line — snapshot the preparation at this moment
+      const side: 'left' | 'right' = q.laneIndex > lk.committed ? 'left' : 'right';
+      lk.cand = q.laneIndex;
+      lk.candT = f.t;
+      lk.side = side;
+      lk.sig = this.signalFor(side, f.t, 1.0);
+      const mirrorKinds = side === 'left' ? (['mirrorL', 'mirrorRear'] as const) : (['mirrorR', 'mirrorRear'] as const);
+      lk.mirror = this.scan.checked([...mirrorKinds], f.t, 6);
+      lk.shoulder = this.scan.checked([side === 'left' ? 'shoulderL' : 'shoulderR'], f.t, 6);
+      const lanes = e.oneway !== 0 ? (e.oneway === 1 ? e.lanesFwd : e.lanesBwd) : q.travelDir === 1 ? e.lanesFwd : e.lanesBwd;
+      const from = lanes[lk.committed];
+      lk.solid = !!from && sLane >= from.solidFromS - 1;
+      lk.lead = this.signalState.side === side ? f.t - this.signalState.since : -1;
+    }
+    // Confirm only when the car is clearly established in the new lane
+    const held = f.t - lk.candT;
+    const depth = toLine; // distance of the car centre from the new lane's nearest line
+    const confirmed = Math.abs(q.laneIndex - lk.committed) >= 2 || (held > 0.8 && depth > 0.9) || (held > 2.5 && depth > 0.5);
+    if (!confirmed) return;
+    lk.committed = q.laneIndex;
+    lk.cand = -1;
+    this.onLaneChange(f, lk);
+  }
+
+  private onLaneChange(f: MonitorFrame, lk: LaneTrack) {
+    const side = lk.side;
     const lc = this.stats.laneChanges;
     lc.total++;
-    const sig = this.signalFor(side, f.t, 1.0);
-    const mirrorKinds = side === 'left' ? (['mirrorL', 'mirrorRear'] as const) : (['mirrorR', 'mirrorRear'] as const);
-    const mirror = this.scan.checked([...mirrorKinds], f.t, 6);
-    const shoulder = this.scan.checked([side === 'left' ? 'shoulderL' : 'shoulderR'], f.t, 6);
+    const sig = lk.sig;
     if (sig === 'ok' || sig === 'late') lc.signaled++;
-    if (mirror) lc.mirror++;
-    if (shoulder) lc.shoulder++;
+    if (lk.mirror) lc.mirror++;
+    if (lk.shoulder) lc.shoulder++;
     const sideTr = side === 'left' ? 'sola' : 'sağa';
+    if (lk.solid) {
+      this.stats.solidLine++;
+      this.emit('solid_line_change', f.x, f.z, 'Kavşak yaklaşımında düz (kesintisiz) çizgiyi geçerek şerit değiştirdiniz');
+    }
     if (sig === 'none') this.emit('no_signal_lane', f.x, f.z, `Sinyal vermeden ${sideTr} şerit değiştirdiniz`);
     else if (sig === 'wrong') this.emit('wrong_signal', f.x, f.z, 'Sinyal yönü ile şerit değişimi uyuşmuyor');
     else if (sig === 'late') this.emit('late_signal', f.x, f.z, 'Sinyal çok geç verildi (en az 1–3 sn önce)');
-    if (!mirror) this.emit('no_mirror_lane', f.x, f.z, `Şerit değişiminden önce ${side === 'left' ? 'sol' : 'sağ'} ayna kontrolü yok`);
-    if (!shoulder) this.emit('no_shoulder_lane', f.x, f.z, 'Kör nokta (omuz) kontrolü yapılmadı');
-    if (sig === 'ok' && mirror) this.emit('msm_good', f.x, f.z, shoulder ? 'Mükemmel: Ayna → Sinyal → Omuz → Manevra' : 'İyi: Ayna → Sinyal → Manevra');
-    if (this.signalState.side === side) this.signalLeads.push(f.t - this.signalState.since);
-    this.lastLaneChange = { side, t: f.t, signaled: sig === 'ok' || sig === 'late', mirror, shoulder };
+    if (!lk.mirror) this.emit('no_mirror_lane', f.x, f.z, `Şerit değişiminden önce ${side === 'left' ? 'sol' : 'sağ'} ayna kontrolü yok`);
+    if (!lk.shoulder) this.emit('no_shoulder_lane', f.x, f.z, 'Kör nokta (omuz) kontrolü yapılmadı');
+    if (sig === 'ok' && lk.mirror && !lk.solid) this.emit('msm_good', f.x, f.z, lk.shoulder ? 'Mükemmel: Ayna → Sinyal → Omuz → Manevra' : 'İyi: Ayna → Sinyal → Manevra');
+    if (lk.lead >= 0) this.signalLeads.push(lk.lead);
+    this.lastLaneChange = { side, t: f.t, signaled: sig === 'ok' || sig === 'late', mirror: lk.mirror, shoulder: lk.shoulder };
     if (this.signalState.side === side) {
       this.signalState.maneuverDone = true;
       this.signalState.doneT = f.t;
+    }
+    // Weaving: many lane changes in a short time
+    this.laneChangeTimes.push(f.t);
+    this.laneChangeTimes = this.laneChangeTimes.filter((t) => f.t - t < 25);
+    if (this.laneChangeTimes.length >= 3) {
+      const before = (this.cool.get('weave') ?? -99) < f.t - 30;
+      if (before) this.stats.weaving++;
+      this.emit('weaving', f.x, f.z, `Kısa sürede ${this.laneChangeTimes.length} kez şerit değiştirdiniz (zikzak)`, undefined, undefined, 'weave', 30);
     }
   }
 
@@ -401,7 +517,11 @@ export class DrivingMonitor {
         }
       }
     }
-    // Junction entry / exit
+    // Junction entry / exit (highway bends are just road curves)
+    if (q.kind === 'junction' && q.node && q.node.kind === 'bend') {
+      this.junction = null;
+      return;
+    }
     if (q.kind === 'junction' && q.node) {
       if (!this.junction || this.junction.node !== q.node) {
         const prev = this.lastQ;
@@ -419,12 +539,31 @@ export class DrivingMonitor {
           signalSince: this.signalState.since,
           mirrorL: this.scan.checked(['mirrorL', 'mirrorRear', 'shoulderL'], f.t, 7),
           mirrorR: this.scan.checked(['mirrorR', 'mirrorRear', 'shoulderR'], f.t, 7),
+          rbYieldFail: false,
         };
-      }
+        if (q.node.kind === 'roundabout') this.checkRoundaboutEntry(f, this.junction);
+      } else if (q.node.signalized && f.kmh < 2 && this.junction.arm && this.signals && f.signal === 'none' && Math.abs(angleDiff(f.heading, this.junction.heading)) < 0.35) {
+        // stuck in the junction box while our own approach is red → blocking the junction
+        const st2 = this.signals.state(q.node, this.junction.arm);
+        if (st2 === 'red') {
+          this.blockT += f.dt;
+          if (this.blockT > 4) {
+            if ((this.cool.get('jblock') ?? -99) < f.t - 30) this.stats.junctionBlocks++;
+            this.emit('junction_block', f.x, f.z, 'Kavşak içinde kaldınız — çıkış boş değilse kavşağa girmeyin', undefined, undefined, 'jblock', 30);
+          }
+        } else this.blockT = 0;
+      } else this.blockT = 0;
     } else if (this.junction && q.edge && (q.kind === 'road' || q.kind === 'parking')) {
       const j = this.junction;
       this.junction = null;
+      this.blockT = 0;
       if (!j.arm) return;
+      if (j.node.kind === 'roundabout') {
+        this.onRoundaboutExit(f, j);
+        return;
+      }
+      // A plain corner (two arms) is the road bending — no turn-signal rule applies
+      if (j.node.armCount <= 2) return;
       const exitHeading = q.travelDir === 1 ? q.edge.heading : q.edge.heading + Math.PI;
       const dh = angleDiff(exitHeading, j.heading);
       if (Math.abs(dh) < 0.5 || Math.abs(dh) > 2.6) return; // straight or U-turn
@@ -451,6 +590,41 @@ export class DrivingMonitor {
       }
       this.lastTurn = { side, t: f.t, signaled: j.signalSide === side, mirror, node: j.node.id };
       if (signaled && mirror) this.emit('msm_good', f.x, f.z, `${sideTr} dönüş: ayna + sinyal doğru`);
+    }
+  }
+
+  /** Entering a roundabout: circulating traffic approaching our entry point has priority. */
+  private checkRoundaboutEntry(f: MonitorFrame, j: JunctionEntry) {
+    const n = j.node;
+    const ae = Math.atan2(f.z - n.z, f.x - n.x);
+    for (const c of f.cars) {
+      if (!c.conn || c.conn.node !== n || c.v < 1) continue;
+      const dc = Math.hypot(c.x - n.x, c.z - n.z);
+      if (dc > n.ringOuter + 0.5 || dc < n.radius) continue;
+      const ac = Math.atan2(c.z - n.z, c.x - n.x);
+      let da = ac - ae;
+      while (da < 0) da += Math.PI * 2;
+      while (da >= Math.PI * 2) da -= Math.PI * 2;
+      // circulation decreases the angle: a car at a slightly larger angle is about to reach us
+      if (da > 0.05 && da < 1.7 && (da * n.ringR) / c.v < 2.4) {
+        j.rbYieldFail = true;
+        this.stats.roundabouts.yieldFail++;
+        this.emit('rb_yield_fail', f.x, f.z, 'Göbekli kavşakta içerideki (dönen) araca yol vermediniz');
+        break;
+      }
+    }
+  }
+
+  private onRoundaboutExit(f: MonitorFrame, j: JunctionEntry) {
+    const rb = this.stats.roundabouts;
+    rb.total++;
+    const signaled = f.t - this.lastRightSignalT < 1.6;
+    if (signaled) rb.exitSignal++;
+    else this.emit('rb_no_exit_signal', f.x, f.z, 'Göbekli kavşaktan çıkarken sağ sinyal verin');
+    if (signaled && !j.rbYieldFail) this.emit('rb_good', f.x, f.z, 'Göbekli kavşak: yol verme ve çıkış sinyali doğru');
+    if (this.signalState.side !== 'none') {
+      this.signalState.maneuverDone = true;
+      this.signalState.doneT = f.t;
     }
   }
 
@@ -510,9 +684,18 @@ export class DrivingMonitor {
   private trackSpeed(f: MonitorFrame) {
     const st = this.stats;
     const lim = f.q.limit;
-    const zone = !!f.q.zoneLabel;
-    const tol = zone ? 3 : 6;
+    const zone = f.q.zone;
+    const sensitive = !!zone && SENSITIVE.has(zone.kind);
+    const tol = sensitive ? 3 : Math.max(6, Math.round(lim * 0.1));
     const over = f.kmh - lim;
+    // per-zone bookkeeping (road type when outside special zones)
+    const key = zone ? zone.label : f.q.edge ? `${f.q.edge.spec.label} (${lim})` : null;
+    if (key && f.kmh > 3) {
+      const zs = st.zones[key] ?? (st.zones[key] = { time: 0, over: 0, maxOver: 0, limit: lim });
+      zs.time += f.dt;
+      if (over > tol) zs.over += f.dt;
+      zs.maxOver = Math.max(zs.maxOver, over);
+    }
     if (over > 0) st.overIntegral += over * f.dt;
     if (over > tol) {
       st.overTime += f.dt;
@@ -535,7 +718,12 @@ export class DrivingMonitor {
         if (sp.below > 1.0) {
           const sev: Severity = sp.max > 30 ? 'critical' : sp.max > 15 ? 'major' : 'minor';
           const dur = f.t - sp.start;
-          this.emit('speeding', f.x, f.z, `${zone ? 'Okul bölgesinde ' : ''}hız sınırı ${Math.round(sp.max)} km/h aşıldı (${dur.toFixed(0)} sn)`, sp.max, zone && sev === 'minor' ? 'major' : sev);
+          if (sensitive && zone) {
+            this.emit('zone_speeding', f.x, f.z, `${zone.label}: ${zone.limit} km/h sınırı ${Math.round(sp.max)} km/h aşıldı (${dur.toFixed(0)} sn)`, sp.max, sev === 'minor' ? 'major' : sev);
+          } else {
+            const where = zone ? `${zone.label.toLocaleLowerCase('tr-TR')} — ` : '';
+            this.emit('speeding', f.x, f.z, `${where}hız sınırı (${lim}) ${Math.round(sp.max)} km/h aşıldı (${dur.toFixed(0)} sn)`, sp.max, sev);
+          }
           this.speeding = { start: 0, max: 0, active: false, below: 0 };
         }
       }
@@ -552,6 +740,123 @@ export class DrivingMonitor {
       st.nightNoLightsTime += f.dt;
       if (this.noLightsT > 5) this.emit('no_headlights', f.x, f.z, 'Karanlıkta farlar kapalı (L)', undefined, undefined, 'lights', 45);
     } else this.noLightsT = 0;
+  }
+
+  // ———————————————————————— highway rules ————————————————————————
+
+  private trackHighway(f: MonitorFrame) {
+    const st = this.stats;
+    const q = f.q;
+    const hw = q.edge?.cls === 'highway' || q.node?.kind === 'bend';
+    if (hw) {
+      st.highwayTime += f.dt;
+      st.highwayDistance += Math.abs(f.speed) * f.dt;
+    }
+    // Emergency lane (paved shoulder) is not a travel lane
+    if (q.kind === 'shoulder' && f.kmh > 8) {
+      this.shoulderT += f.dt;
+      st.shoulderTime += f.dt;
+      if (this.shoulderT > 1.5) this.emit('shoulder_drive', f.x, f.z, 'Emniyet şeridinde seyir yasaktır — şeridinize dönün', undefined, undefined, 'shoulder', 15);
+    } else this.shoulderT = 0;
+    if (!hw || q.kind !== 'road' || !q.edge) {
+      this.hogT = 0;
+      this.slowT = 0;
+      this.relPos.clear();
+      return;
+    }
+    const e = q.edge;
+    const fx = Math.sin(f.heading);
+    const fz = Math.cos(f.heading);
+    const sLane = q.travelDir === 1 ? q.along : e.length - q.along;
+    // Relative positions of cars on the same carriageway
+    let slowerAheadRight = false;
+    const seen = new Set<number>();
+    for (const c of f.cars) {
+      if (!c.lane || c.lane.edge !== e || c.lane.dir !== q.travelDir) continue;
+      const rel = (c.x - f.x) * fx + (c.z - f.z) * fz;
+      if (Math.abs(rel) > 160) continue;
+      seen.add(c.id);
+      if (c.lane.index < q.laneIndex && rel > -5 && rel < 150 && c.v * 3.6 < f.kmh + 5) slowerAheadRight = true;
+      const prev = this.relPos.get(c.id);
+      this.relPos.set(c.id, rel);
+      // we just passed this car: were we on its right side after cutting back to the right?
+      if (prev !== undefined && prev > 0 && rel <= 0 && q.laneIndex < c.lane.index && f.kmh > 50 && f.kmh - c.v * 3.6 > 8) {
+        const recentRight = this.lastLaneChange && this.lastLaneChange.side === 'right' && f.t - this.lastLaneChange.t < 15;
+        if (recentRight) {
+          if ((this.cool.get('rovt') ?? -99) < f.t - 20) st.rightOvertakes++;
+          this.emit('right_overtake', f.x, f.z, 'Sağdan sollama yaptınız — sollama soldan yapılır', undefined, undefined, 'rovt', 20);
+        }
+      }
+    }
+    for (const id of [...this.relPos.keys()]) if (!seen.has(id)) this.relPos.delete(id);
+    // Keep right: staying in the leftmost lane without overtaking anyone
+    if (e.spec.lanes >= 2 && q.laneIndex === e.spec.lanes - 1 && f.kmh > 50 && !slowerAheadRight) {
+      this.hogT += f.dt;
+      if (this.hogT > 30) {
+        this.hogT = 0;
+        st.leftLaneHog++;
+        this.emit('left_lane_hog', f.x, f.z, 'Sol şerit sollama içindir — sollamadan sonra sağ şeritlere dönün', undefined, undefined, 'hog', 60);
+      }
+    } else this.hogT = 0;
+    // Driving far below the limit on a free highway obstructs traffic
+    const leadClose = f.lead && f.lead.gap < 70;
+    if (f.kmh > 2 && f.kmh < 45 && q.limit >= 90 && !leadClose && sLane > 160) {
+      this.slowT += f.dt;
+      if (this.slowT > 8) {
+        this.slowT = 0;
+        st.tooSlow++;
+        this.emit('too_slow', f.x, f.z, 'Bölünmüş yolda trafiği engelleyecek kadar yavaş gidiyorsunuz', undefined, undefined, 'slow', 40);
+      }
+    } else this.slowT = 0;
+  }
+
+  // ———————————————————————— zones ————————————————————————
+
+  private trackZoneRules(f: MonitorFrame) {
+    const zone = f.q.zone;
+    this.zoneKey = zone ? zone.label : null;
+    if (f.horn && zone?.noHorn) {
+      if ((this.cool.get('horn') ?? -99) < f.t - 10) this.stats.hornViolations++;
+      this.emit('horn_prohibited', f.x, f.z, `${zone.label}: korna çalmak yasaktır`, undefined, undefined, 'horn', 10);
+    }
+  }
+
+  /** Current zone label (for HUD). */
+  get currentZone() {
+    return this.zoneKey;
+  }
+
+  // ———————————————————————— emergency vehicles ————————————————————————
+
+  private trackEmergency(f: MonitorFrame) {
+    const em = f.emergency;
+    if (!em) return;
+    const dx = f.x - em.x;
+    const dz = f.z - em.z;
+    const d = Math.hypot(dx, dz);
+    // only when the emergency vehicle is behind us and travelling the same way
+    const behind = dx * Math.sin(em.heading) + dz * Math.cos(em.heading) > 0;
+    const same = Math.abs(angleDiff(em.heading, f.heading)) < 0.6;
+    let rec = this.emergencySeen.get(em.id);
+    if (!rec) {
+      if (d < 60 && behind && same) {
+        rec = { t: f.t, ok: false, judged: false };
+        this.emergencySeen.set(em.id, rec);
+        this.stats.emergency.total++;
+      } else return;
+    }
+    if (rec.judged) return;
+    // yielding = moving to the right / slowing down so it can pass
+    const lat = -dx * Math.cos(em.heading) + dz * Math.sin(em.heading);
+    if ((lat > 1.6 || f.kmh < 12) && d < 40) rec.ok = true;
+    const passed = !behind && d > 8;
+    if (passed || f.t - rec.t > 20) {
+      rec.judged = true;
+      if (rec.ok || passed) {
+        this.stats.emergency.yielded++;
+        this.emit('emergency_yield_ok', f.x, f.z, 'Geçiş üstünlüğü olan araca yol verdiniz');
+      } else this.emit('emergency_yield_fail', f.x, f.z, 'Sirenli araca yol vermediniz — sağa yanaşıp yavaşlayın');
+    }
   }
 
   private trackSurface(f: MonitorFrame) {

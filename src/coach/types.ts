@@ -54,7 +54,22 @@ export type EventKind =
   | 'reaction'
   | 'reset'
   | 'reroute'
-  | 'objective';
+  | 'objective'
+  | 'solid_line_change'
+  | 'weaving'
+  | 'shoulder_drive'
+  | 'right_overtake'
+  | 'left_lane_hog'
+  | 'too_slow'
+  | 'horn_prohibited'
+  | 'junction_block'
+  | 'rb_yield_fail'
+  | 'rb_no_exit_signal'
+  | 'rb_good'
+  | 'emergency_yield_fail'
+  | 'emergency_yield_ok'
+  | 'stall'
+  | 'zone_speeding';
 
 export type CoachEvent = {
   kind: EventKind;
@@ -110,6 +125,21 @@ export const EVENT_META: Record<EventKind, { label: string; component: Component
   reset: { label: 'Araç sıfırlandı', component: 'gorev', severity: 'info' },
   reroute: { label: 'Rotadan sapma', component: 'gorev', severity: 'info' },
   objective: { label: 'Görev hedefi', component: 'gorev', severity: 'positive' },
+  solid_line_change: { label: 'Düz çizgide şerit değiştirme', component: 'kural', severity: 'major' },
+  weaving: { label: 'Zikzak / sık şerit değiştirme', component: 'kural', severity: 'minor' },
+  shoulder_drive: { label: 'Emniyet şeridinde seyir', component: 'kural', severity: 'major' },
+  right_overtake: { label: 'Sağdan sollama', component: 'kural', severity: 'major' },
+  left_lane_hog: { label: 'Sol şeridi gereksiz işgal', component: 'kural', severity: 'minor' },
+  too_slow: { label: 'Trafiği engelleyen yavaş seyir', component: 'kural', severity: 'minor' },
+  horn_prohibited: { label: 'Korna yasağı ihlali', component: 'kural', severity: 'minor' },
+  junction_block: { label: 'Kavşağı tıkama', component: 'kural', severity: 'minor' },
+  rb_yield_fail: { label: 'Göbekli kavşakta yol vermeme', component: 'kural', severity: 'major' },
+  rb_no_exit_signal: { label: 'Göbekli kavşak çıkışında sinyal yok', component: 'kural', severity: 'minor' },
+  rb_good: { label: 'Göbekli kavşak doğru kullanıldı', component: 'kural', severity: 'positive' },
+  emergency_yield_fail: { label: 'Geçiş üstünlüğü olan araca yol vermeme', component: 'kural', severity: 'major' },
+  emergency_yield_ok: { label: 'Geçiş üstünlüğü olan araca yol verildi', component: 'kural', severity: 'positive' },
+  stall: { label: 'Motor stop etti', component: 'puruzsuzluk', severity: 'minor' },
+  zone_speeding: { label: 'Özel bölgede hız ihlali', component: 'kural', severity: 'major' },
 };
 
 export const SEVERITY_LABEL: Record<Severity, string> = {

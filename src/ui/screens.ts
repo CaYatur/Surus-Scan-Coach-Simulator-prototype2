@@ -1,6 +1,7 @@
 import { el, esc, fmtDate, scoreColor, download } from './dom';
 import { lineChart, radarSvg, stars } from './charts';
-import { settings, DEFAULT_SETTINGS, type Settings, type QualityLevel } from '../core/settings';
+import { settings, DEFAULT_SETTINGS, CONTROL_PRESETS, PRESET_KEYS, type Settings, type QualityLevel, type ControlPreset } from '../core/settings';
+import { BIND_META, actionKeys, bindings, keyLabel, rebind, resetBindings, type BindAction } from '../input/bindings';
 import { MISSIONS, missionById } from '../missions/catalog';
 import type { MissionDef, MissionCategory } from '../missions/mission';
 import { MAPS } from '../world/mapDefs';
@@ -432,7 +433,7 @@ export class Screens {
   private toggleRow(label: string, key: keyof Settings, desc = ''): HTMLElement {
     const inp = el('input', { type: 'checkbox' }) as HTMLInputElement;
     inp.checked = !!settings.get()[key];
-    inp.onchange = () => settings.update({ [key]: inp.checked } as Partial<Settings>);
+    inp.onchange = () => settings.update({ [key]: inp.checked, ...(PRESET_KEYS.includes(key) ? { controlPreset: 'custom' } : {}) } as Partial<Settings>);
     return el('label', { class: 'toggle-row' }, [el('div', {}, [el('b', { text: label }), desc ? el('small', { text: desc }) : null]), el('span', { class: 'switch' }, [inp, el('i')])]);
   }
 
@@ -445,6 +446,41 @@ export class Screens {
       out.textContent = fmt(parseFloat(inp.value));
     };
     return el('div', { class: 'field' }, [el('label', {}, [label, out]), inp, desc ? el('small', { class: 'muted', text: desc }) : null]);
+  }
+
+  private bindingTable(redraw: () => void): HTMLElement {
+    const wrap = el('div', { class: 'bind-grid' });
+    const map = bindings();
+    let group = '';
+    for (const m of BIND_META) {
+      if (m.group !== group) {
+        group = m.group;
+        wrap.append(el('div', { class: 'bind-group', text: group }));
+      }
+      const keys = el('div', { class: 'bind-keys' });
+      for (let slot = 0; slot < 2; slot++) {
+        const code = map[m.action][slot];
+        const b = el('button', { class: `kbtn ${code ? '' : 'empty'}`, text: code ? keyLabel(code) : '+' });
+        b.onclick = () => this.captureKey(m.action, slot, b, redraw);
+        keys.append(b);
+      }
+      wrap.append(el('div', { class: 'bind-row' }, [el('div', {}, [el('b', { text: m.label }), m.hint ? el('small', { class: 'muted', text: m.hint }) : null]), keys]));
+    }
+    return wrap;
+  }
+
+  private captureKey(action: BindAction, slot: number, btn: HTMLElement, redraw: () => void) {
+    btn.textContent = 'tuşa bas…';
+    btn.classList.add('capturing');
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      window.removeEventListener('keydown', onKey, true);
+      if (e.code !== 'Escape') rebind(action, e.code, slot);
+      redraw();
+    };
+    // capture before the app's own handlers (Esc would otherwise close the menu)
+    window.addEventListener('keydown', onKey, true);
   }
 
   private settingsScreen(): HTMLElement {
@@ -522,17 +558,40 @@ export class Screens {
           const detect = this.btn('Algıla', 'ghost', () => this.detectAxis(key, sel));
           return el('div', { class: 'field inline' }, [el('label', { text: label }), sel, detect]);
         };
+        const preset = el('div', { class: 'radio-cards row3' });
+        const presets: [ControlPreset, string, string][] = [
+          ['easy', '🟢 Kolay', 'Otomatik vites (S ile durup geri gider), ABS, otomatik far ve sinyal kapanması, hıza duyarlı direksiyon. Yeni başlayanlar için.'],
+          ['advanced', '🔴 Gelişmiş', 'Manuel şanzıman + debriyaj (motor stop edebilir), fren yalnızca frendir, farlar elle açılır. Sürücü kursu aracına en yakın deneyim.'],
+          ['custom', '⚙️ Özel', 'Aşağıdaki seçenekleri tek tek ayarlayın.'],
+        ];
+        for (const [v, t, d] of presets) {
+          const c = el('button', { class: `radio-card ${s.controlPreset === v ? 'sel' : ''}`, html: `<b>${t}</b><small>${d}</small>` });
+          c.onclick = () => {
+            settings.update({ controlPreset: v, ...(v !== 'custom' ? CONTROL_PRESETS[v] : {}) });
+            redraw();
+          };
+          preset.append(c);
+        }
         const trans = el('div', { class: 'seg' });
-        for (const [v, t] of [['auto', 'Otomatik D/R (S ile geri)'], ['selector', 'Vites seçici (1=D 2=R 3=N 4=P)']] as const) {
+        for (const [v, t] of [
+          ['auto', 'Otomatik (D/R kendiliğinden)'],
+          ['selector', `Otomatik + vites seçici (${actionKeys('gearD')}=D ${actionKeys('gearR')}=R ${actionKeys('gearN')}=N ${actionKeys('gearP')}=P)`],
+          ['manual', 'Manuel (1–6, R, debriyaj)'],
+        ] as const) {
           const b = el('button', { class: s.transmission === v ? 'active' : '', text: t });
           b.onclick = () => {
-            settings.update({ transmission: v });
+            settings.update({ transmission: v, controlPreset: 'custom' });
             redraw();
           };
           trans.append(b);
         }
         return [
+          el('div', { class: 'field' }, [el('label', { text: 'Kontrol ön ayarı' }), preset]),
           el('div', { class: 'field' }, [el('label', { text: 'Şanzıman' }), trans]),
+          s.transmission === 'manual' ? this.toggleRow('Debriyaj yardımı', 'clutchAssist', 'Açıkken debriyaj otomatik; kapalıyken vites değiştirmek için debriyaja basmalısınız ve motor stop edebilir') : el('div'),
+          this.toggleRow('ABS (kilitlenmeyi önleyici fren)', 'abs', 'Kapalıyken sert frende tekerlekler kilitlenir, direksiyon hakimiyeti azalır'),
+          this.toggleRow('Sinyal otomatik kapansın', 'autoSignalCancel', 'Dönüş tamamlanınca sinyal kendiliğinden kapanır'),
+          this.toggleRow('Otomatik farlar', 'autoLights', 'Karanlıkta ve yağmurda farlar kendiliğinden yanar'),
           this.sliderRow('Klavye direksiyon hızı', 'keyboardSteerSpeed', 0.5, 2, 0.1, (v) => `${v.toFixed(1)}x`),
           this.toggleRow('Hıza duyarlı direksiyon (klavye)', 'speedSensitiveSteering', 'Yüksek hızda direksiyon açısı otomatik azalır'),
           el('h4', { text: 'Gamepad / Direksiyon seti' }),
@@ -545,14 +604,20 @@ export class Screens {
           axisSel('Gaz pedalı ekseni', 'wheelThrottleAxis'),
           axisSel('Fren pedalı ekseni', 'wheelBrakeAxis'),
           this.toggleRow('Pedallar ters (1 = bırakılmış)', 'wheelPedalsInverted'),
-          el('div', { class: 'keymap', html: KEYMAP_HTML }),
+          el('h4', { text: 'Tuş atamaları' }),
+          el('p', { class: 'muted small', text: 'Bir tuşa tıklayın, sonra yeni tuşa basın (Esc: iptal). Aynı tuş başka bir işlevdeyse oradan kaldırılır.' }),
+          this.bindingTable(redraw),
+          el('div', { class: 'row' }, [this.btn('Varsayılan tuşlar', 'ghost', () => {
+            resetBindings();
+            redraw();
+          })]),
         ];
       }
       case 'tarama': {
         const modes: [Settings['scanMode'], string, string][] = [
           ['keys', 'Bakış tuşları + sinyal (önerilen)', 'Z sol ayna, C sağ ayna, X iç dikiz, Shift+Z / Shift+C omuz kontrolü. Kamera gerçekten o yöne döner; manevra öncesi Ayna → Sinyal → Omuz sırası puanlanır.'],
           ['webcam', 'Webcam kafa takibi', 'Kafanızı çevirerek aynalara bakın (MediaPipe, tamamen cihazınızda çalışır; görüntü hiçbir yere gönderilmez). Tuşlar da çalışmaya devam eder.'],
-          ['legacy', 'Tek tuş proxy (eski)', 'Space veya F = "ayna/omuz baktım". Basit ama yön ayırt etmez. Bu modda el freni yalnızca B tuşundadır.'],
+          ['legacy', 'Tek tuş proxy (eski)', 'Bakış tuşlarından (Z / X / C) herhangi biri = "ayna/omuz baktım". Basit ama yön ayırt etmez.'],
         ];
         const list = el('div', { class: 'radio-cards' });
         for (const [v, t, d] of modes) {
@@ -618,6 +683,7 @@ export class Screens {
           this.toggleRow('Canlı koç ipuçları', 'liveCoachHints', 'İhlal ve olumlu davranışlar anında ekranda gösterilir'),
           this.toggleRow('Yol rehber çizgisi', 'routeGuideLine'),
           this.toggleRow('Sürpriz olaylar', 'surpriseEvents'),
+          this.toggleRow('Sirenli acil araçlar (ambulans / polis)', 'emergencyVehicles', 'Şehirde zaman zaman arkadan sirenli araç gelir; yol verip vermediğiniz değerlendirilir'),
           this.toggleRow('Ağır kazada oturumu bitir', 'endOnHardCrash'),
         ];
       }
@@ -697,7 +763,7 @@ export class Screens {
   // ——————————————————————————— help ———————————————————————————
 
   private helpScreen(): HTMLElement {
-    return this.frame('Nasıl Oynanır', [el('div', { class: 'help', html: HELP_HTML })], { wide: true });
+    return this.frame('Nasıl Oynanır', [el('div', { class: 'help', html: helpHtml() })], { wide: true });
   }
 
   // ——————————————————————————— in-drive overlays ———————————————————————————
@@ -802,7 +868,7 @@ export class Screens {
         this.closeOverlay();
         this.app.resume();
       })]),
-      el('div', { class: 'keymap', html: KEYMAP_HTML }),
+      el('div', { class: 'keymap', html: keymapHtml() }),
     ]);
     this.openOverlay(box, 'dim');
   }
@@ -832,31 +898,46 @@ export class Screens {
   }
 }
 
-const KEYMAP_HTML = `
+/** Key reference built from the live bindings. */
+function keymapHtml(): string {
+  const k = (a: BindAction) => bindings()[a].map((c) => `<kbd>${esc(keyLabel(c))}</kbd>`).join(' ') || '—';
+  const s = settings.get();
+  const gears =
+    s.transmission === 'manual'
+      ? `<tr><td>${k('gearUp')} ${k('gearDown')}</td><td>Vites yükselt / düşür</td><td>${k('gear1')}…${k('gear6')}</td><td>Doğrudan vites · ${k('gearR')} geri · ${k('gearN')} boş</td></tr><tr><td>${k('clutch')}</td><td>Debriyaj${s.clutchAssist ? ' (yardım açık)' : ''}</td><td></td><td></td></tr>`
+      : s.transmission === 'selector'
+        ? `<tr><td>${k('gearD')} ${k('gearR')} ${k('gearN')} ${k('gearP')}</td><td>Vites D / R / N / P</td><td></td><td></td></tr>`
+        : `<tr><td colspan="2">Otomatik: ${k('brake')} ile durup basılı tutun → geri vites; ${k('throttle')} → ileri</td><td>${k('gearR')} ${k('gearD')}</td><td>Geri / ileri seçimi</td></tr>`;
+  return `
 <table class="tbl keys"><tbody>
 <tr><th colspan="2">Sürüş</th><th colspan="2">Tarama & sinyal</th></tr>
-<tr><td><kbd>W</kbd>/<kbd>↑</kbd></td><td>Gaz</td><td><kbd>Z</kbd></td><td>Sol ayna</td></tr>
-<tr><td><kbd>S</kbd>/<kbd>↓</kbd></td><td>Fren · durunca basılı tut: geri vites</td><td><kbd>C</kbd></td><td>Sağ ayna</td></tr>
-<tr><td><kbd>A</kbd> <kbd>D</kbd></td><td>Direksiyon</td><td><kbd>X</kbd></td><td>İç dikiz aynası</td></tr>
-<tr><td><kbd>Space</kbd>/<kbd>B</kbd></td><td>El freni</td><td><kbd>Shift</kbd>+<kbd>Z</kbd>/<kbd>C</kbd></td><td>Sol / sağ omuz kontrolü</td></tr>
-<tr><td><kbd>1</kbd>-<kbd>4</kbd></td><td>Vites D / R / N / P</td><td><kbd>Q</kbd> <kbd>E</kbd></td><td>Sol / sağ sinyal</td></tr>
-<tr><td><kbd>H</kbd></td><td>Korna</td><td><kbd>G</kbd></td><td>Dörtlü flaşör</td></tr>
+<tr><td>${k('throttle')}</td><td>Gaz</td><td>${k('mirrorL')}</td><td>Sol ayna</td></tr>
+<tr><td>${k('brake')}</td><td>Fren</td><td>${k('mirrorR')}</td><td>Sağ ayna</td></tr>
+<tr><td>${k('steerLeft')} ${k('steerRight')}</td><td>Direksiyon</td><td>${k('mirrorRear')}</td><td>İç dikiz aynası</td></tr>
+<tr><td>${k('handbrake')}</td><td>El freni</td><td>${k('shoulder')} + ${k('mirrorL')}/${k('mirrorR')}</td><td>Sol / sağ omuz kontrolü</td></tr>
+<tr><td>${k('horn')}</td><td>Korna</td><td>${k('signalL')} ${k('signalR')}</td><td>Sol / sağ sinyal</td></tr>
+<tr><td>${k('cruise')}</td><td>Hız sabitleyici (${k('cruiseUp')} ${k('cruiseDown')} ±5)</td><td>${k('hazard')}</td><td>Dörtlü flaşör</td></tr>
+<tr><th colspan="4">Vites</th></tr>
+${gears}
 <tr><th colspan="2">Görünüm</th><th colspan="2">Diğer</th></tr>
-<tr><td><kbd>V</kbd></td><td>Kamera değiştir (6 mod)</td><td><kbd>L</kbd></td><td>Farlar</td></tr>
-<tr><td>Sağ tık + sürükle</td><td>Serbest bakış</td><td><kbd>I</kbd></td><td>Silecek</td></tr>
-<tr><td><kbd>M</kbd></td><td>Harita / hedef seç</td><td><kbd>R</kbd></td><td>Aracı şeride al</td></tr>
-<tr><td><kbd>J</kbd></td><td>Görev panosu</td><td><kbd>U</kbd></td><td>HUD modu</td></tr>
-<tr><td><kbd>Esc</kbd>/<kbd>P</kbd></td><td>Duraklat</td><td><kbd>O</kbd></td><td>Kafa takibini merkezle</td></tr>
+<tr><td>${k('camera')}</td><td>Kamera değiştir (6 mod)</td><td>${k('lights')}</td><td>Farlar</td></tr>
+<tr><td>Sağ tık + sürükle</td><td>Serbest bakış</td><td>${k('wipers')}</td><td>Silecek</td></tr>
+<tr><td>${k('map')}</td><td>Harita / hedef seç</td><td>${k('reset')}</td><td>Aracı şeride al</td></tr>
+<tr><td>${k('missions')}</td><td>Görev panosu</td><td>${k('hud')}</td><td>HUD modu</td></tr>
+<tr><td>${k('pause')}</td><td>Duraklat</td><td>${k('recenter')}</td><td>Kafa takibini merkezle</td></tr>
 <tr><th colspan="4">Gamepad</th></tr>
-<tr><td colspan="4">Sol çubuk direksiyon · RT gaz · LT fren · B el freni · LB/RB sinyal · Sağ çubuk ayna/omuz bakışı · Y kamera · X dörtlü · A korna · Start duraklat · Back harita</td></tr>
+<tr><td colspan="4">Sol çubuk direksiyon · RT gaz · LT fren · B el freni · LB/RB sinyal · Sağ çubuk ayna/omuz bakışı · Y kamera · X dörtlü · A korna · R3 hız sabitleyici · Start duraklat · Back harita${s.transmission === 'manual' ? ' · D-pad ↑/↓ vites' : ''}</td></tr>
 </tbody></table>`;
+}
 
-const HELP_HTML = `
+function helpHtml(): string {
+  return `
 <div class="grid2">
 <div class="card"><h3>Amaç</h3><p>Sürüş Koçu, gerçek trafik kurallarına yakın bir şehirde <b>güvenli ve dikkatli sürüş alışkanlıklarını</b> ölçer. Her oturumun sonunda ayrıntılı bir rapor alırsın; profil oluşturduysan puanların <b>Sürücü Karnesi</b>'ne işlenir.</p>
 <ol><li><b>Kalibrasyon Programı</b> ile başla: kişisel sürüş stilin çıkarılır.</li><li><b>Beceri</b> görevleriyle zayıf yönlerini çalış (park, MSM, tepki).</li><li><b>Şehir</b>de serbest sür, görev panosundan (J) görev seç.</li></ol></div>
 <div class="card"><h3>Ayna → Sinyal → Manevra</h3><p>Şerit değiştirirken ve dönerken güvenli sıra:</p><ol><li>İç dikiz + ilgili yan ayna (<kbd>X</kbd>, <kbd>Z</kbd>/<kbd>C</kbd>)</li><li>Sinyal (<kbd>Q</kbd>/<kbd>E</kbd>) — en az 1–3 sn önce</li><li>Kör nokta: omuz kontrolü (<kbd>Shift</kbd>+<kbd>Z</kbd>/<kbd>C</kbd>)</li><li>Manevra, sonra sinyali kapat</li></ol><p class="muted small">Dönüşlerde sinyal direksiyon düzelince kendiliğinden kapanır; şerit değişiminde kapatmak sana kalır.</p></div>
 <div class="card"><h3>Puanlama</h3><p>5 bileşen: <b>Güvenlik %30</b> (çarpışma, ramak kala/TTC, takip mesafesi, sert olaylar, tepki) · <b>Kural %25</b> (hız, ışık, DUR, öncelik, yaya, sinyal, yön) · <b>Tarama %20</b> (manevra öncesi ayna, omuz, ayna sıklığı, kavşak taraması) · <b>Pürüzsüzlük %15</b> (jerk, konfor, direksiyon düzeltme) · <b>Görev %10</b>.</p><p>Ağır ihlaller toplam puana tavan koyar (ör. kırmızı ışık 72, ağır kaza 40, yayaya çarpma 20).</p></div>
-<div class="card"><h3>Trafik kuralları</h3><ul><li>Hız sınırları: sokak 30, cadde 50, bulvar 70, okul bölgesi 30 km/h.</li><li>Kırmızı ve kırmızı+sarıda geçilmez; sarıda güvenle durabiliyorsan dur.</li><li>DUR levhasında tam dur (0 km/h), yol ver levhasında ana yola öncelik ver.</li><li>Tek yönlü yollara girilmez levhasından girme.</li><li>Yaya geçidinde yayaya yol ver.</li><li>Takip mesafesi en az 2 sn (yağmurda 4 sn).</li><li>Gece ve yağmurda farlar açık.</li></ul></div>
+<div class="card"><h3>Trafik kuralları</h3><ul><li>Hız sınırları bölgeye göre değişir: sokak 30, cadde 50, şehir merkezi 40, okul/hastane/park çevresi 30, yaya öncelikli çarşı 20, bulvar 60–70, şehir dışı yollar 90, bölünmüş çevre yolu 110 (kavşak yaklaşımı 70, virajlar 90).</li><li>Bölünmüş yolda sağdan gidin, sollamayı soldan yapıp sağa dönün; emniyet şeridinde gidilmez, sağdan sollama yapılmaz.</li><li>Göbekli kavşakta içerideki araç önceliklidir; çıkarken sağ sinyal verin.</li><li>Kavşağa yaklaşırken düz (kesintisiz) çizgide şerit değiştirilmez.</li><li>Sirenli ambulans/polis gelince sağa yanaşıp yavaşlayın.</li><li>Hastane ve okul bölgesinde korna çalınmaz.</li><li>Kırmızı ve kırmızı+sarıda geçilmez; sarıda güvenle durabiliyorsan dur.</li><li>DUR levhasında tam dur (0 km/h), yol ver levhasında ana yola öncelik ver.</li><li>Tek yönlü yollara girilmez levhasından girme.</li><li>Yaya geçidinde yayaya yol ver.</li><li>Takip mesafesi en az 2 sn (yağmurda 4 sn).</li><li>Gece ve yağmurda farlar açık.</li></ul></div>
 </div>
-<div class="card">${KEYMAP_HTML}</div>`;
+<div class="card">${keymapHtml()}</div>`;
+}

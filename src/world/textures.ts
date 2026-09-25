@@ -416,9 +416,16 @@ export function glowTexture(inner = 'rgba(255,220,160,1)', outer = 'rgba(255,200
 }
 
 export type SignKind =
+  | 'limit20'
   | 'limit30'
+  | 'limit40'
   | 'limit50'
+  | 'limit60'
   | 'limit70'
+  | 'limit80'
+  | 'limit90'
+  | 'limit110'
+  | 'limitEnd'
   | 'stop'
   | 'yield'
   | 'crosswalk'
@@ -427,12 +434,28 @@ export type SignKind =
   | 'oneway'
   | 'parking'
   | 'bus'
-  | 'hospital';
+  | 'hospital'
+  | 'noHorn'
+  | 'roundabout'
+  | 'roundaboutAhead'
+  | 'curveL'
+  | 'curveR'
+  | 'keepRight'
+  | 'signalAhead'
+  | 'noOvertakeTruck'
+  | 'emergencyLane';
 
 export const SIGN_KINDS: SignKind[] = [
+  'limit20',
   'limit30',
+  'limit40',
   'limit50',
+  'limit60',
   'limit70',
+  'limit80',
+  'limit90',
+  'limit110',
+  'limitEnd',
   'stop',
   'yield',
   'crosswalk',
@@ -442,12 +465,29 @@ export const SIGN_KINDS: SignKind[] = [
   'parking',
   'bus',
   'hospital',
+  'noHorn',
+  'roundabout',
+  'roundaboutAhead',
+  'curveL',
+  'curveR',
+  'keepRight',
+  'signalAhead',
+  'noOvertakeTruck',
+  'emergencyLane',
 ];
 
-/** Atlas of traffic sign faces (4 × 4 cells of 128 px). Returns UV rect lookup. */
+/** Speed-limit sign kind for a limit value (nearest available plate). */
+export function limitSign(l: number): SignKind {
+  const vals = [20, 30, 40, 50, 60, 70, 80, 90, 110];
+  let best = 50;
+  for (const v of vals) if (Math.abs(v - l) < Math.abs(best - l)) best = v;
+  return `limit${best}` as SignKind;
+}
+
+/** Atlas of traffic sign faces (6 × 6 cells of 128 px). Returns UV rect lookup. */
 export function signAtlas(): { texture: THREE.CanvasTexture; uv: (k: SignKind) => [number, number, number, number] } {
   const C = 128;
-  const N = 4;
+  const N = 6;
   const [c, ctx] = canvas(C * N, C * N);
   ctx.clearRect(0, 0, C * N, C * N);
   const cell = (k: SignKind) => {
@@ -472,16 +512,157 @@ export function signAtlas(): { texture: THREE.CanvasTexture; uv: (k: SignKind) =
     ctx.textBaseline = 'middle';
     ctx.fillText(s, x, y);
   };
+  const warn = (ox: number, oy: number) => {
+    ctx.beginPath();
+    ctx.moveTo(ox + C / 2, oy + 8);
+    ctx.lineTo(ox + C - 8, oy + C - 14);
+    ctx.lineTo(ox + 8, oy + C - 14);
+    ctx.closePath();
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.lineWidth = 10;
+    ctx.strokeStyle = '#d01f1f';
+    ctx.stroke();
+  };
+  const arrow = (x0: number, y0: number, x1: number, y1: number, w: number, color: string) => {
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = w;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+    const a = Math.atan2(y1 - y0, x1 - x0);
+    ctx.beginPath();
+    ctx.moveTo(x1 + Math.cos(a) * w * 1.4, y1 + Math.sin(a) * w * 1.4);
+    ctx.lineTo(x1 + Math.cos(a + 2.3) * w * 1.6, y1 + Math.sin(a + 2.3) * w * 1.6);
+    ctx.lineTo(x1 + Math.cos(a - 2.3) * w * 1.6, y1 + Math.sin(a - 2.3) * w * 1.6);
+    ctx.closePath();
+    ctx.fill();
+  };
   for (const k of SIGN_KINDS) {
     const [ox, oy] = cell(k);
     const cx = ox + C / 2;
     const cy = oy + C / 2;
     switch (k) {
+      case 'limit20':
       case 'limit30':
+      case 'limit40':
       case 'limit50':
+      case 'limit60':
       case 'limit70':
+      case 'limit80':
+      case 'limit90':
+      case 'limit110':
         circle(cx, cy, 60, '#ffffff', '#d01f1f', 14);
-        text(k.slice(5), cx, cy + 3, 56, '#111');
+        text(k.slice(5), cx, cy + 3, k === 'limit110' ? 46 : 56, '#111');
+        break;
+      case 'limitEnd':
+        circle(cx, cy, 60, '#ffffff', '#222', 3);
+        ctx.strokeStyle = '#222';
+        ctx.lineWidth = 4;
+        for (let i = -2; i <= 2; i++) {
+          ctx.beginPath();
+          ctx.moveTo(cx - 40 + i * 9, cy + 40 + i * 9);
+          ctx.lineTo(cx + 40 + i * 9, cy - 40 + i * 9);
+          ctx.stroke();
+        }
+        break;
+      case 'noHorn': {
+        circle(cx, cy, 60, '#1d5fbf', '#d01f1f', 14);
+        // horn
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.moveTo(cx - 34, cy - 8);
+        ctx.lineTo(cx - 10, cy - 8);
+        ctx.lineTo(cx + 24, cy - 26);
+        ctx.lineTo(cx + 24, cy + 26);
+        ctx.lineTo(cx - 10, cy + 8);
+        ctx.lineTo(cx - 34, cy + 8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = '#d01f1f';
+        ctx.lineWidth = 12;
+        ctx.beginPath();
+        ctx.moveTo(cx - 42, cy + 42);
+        ctx.lineTo(cx + 42, cy - 42);
+        ctx.stroke();
+        break;
+      }
+      case 'roundabout':
+        circle(cx, cy, 60, '#1d5fbf');
+        for (let i = 0; i < 3; i++) {
+          const a0 = (i * Math.PI * 2) / 3 + 0.3;
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 10;
+          ctx.beginPath();
+          ctx.arc(cx, cy, 30, a0 + 1.4, a0, true);
+          ctx.stroke();
+          const ax = cx + Math.cos(a0) * 30;
+          const ay = cy + Math.sin(a0) * 30;
+          ctx.fillStyle = '#fff';
+          ctx.beginPath();
+          ctx.moveTo(ax + Math.cos(a0 - Math.PI / 2) * 14, ay + Math.sin(a0 - Math.PI / 2) * 14);
+          ctx.lineTo(ax + Math.cos(a0) * 11, ay + Math.sin(a0) * 11);
+          ctx.lineTo(ax - Math.cos(a0) * 11, ay - Math.sin(a0) * 11);
+          ctx.closePath();
+          ctx.fill();
+        }
+        break;
+      case 'roundaboutAhead':
+        warn(ox, oy);
+        ctx.strokeStyle = '#111';
+        ctx.lineWidth = 7;
+        ctx.beginPath();
+        ctx.arc(cx, cy + 18, 20, 0, Math.PI * 1.6);
+        ctx.stroke();
+        break;
+      case 'curveL':
+      case 'curveR': {
+        warn(ox, oy);
+        const sgn = k === 'curveL' ? -1 : 1;
+        ctx.strokeStyle = '#111';
+        ctx.lineWidth = 9;
+        ctx.beginPath();
+        ctx.moveTo(cx - sgn * 8, cy + 44);
+        ctx.quadraticCurveTo(cx - sgn * 8, cy + 6, cx + sgn * 16, cy - 4);
+        ctx.stroke();
+        ctx.fillStyle = '#111';
+        ctx.beginPath();
+        ctx.moveTo(cx + sgn * 30, cy - 10);
+        ctx.lineTo(cx + sgn * 10, cy - 20);
+        ctx.lineTo(cx + sgn * 14, cy + 8);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      }
+      case 'keepRight':
+        circle(cx, cy, 60, '#1d5fbf');
+        arrow(cx - 26, cy - 26, cx + 16, cy + 16, 12, '#fff');
+        break;
+      case 'signalAhead':
+        warn(ox, oy);
+        ctx.fillStyle = '#111';
+        ctx.fillRect(cx - 12, cy - 12, 24, 58);
+        circle(cx, cy - 2, 7, '#e53935');
+        circle(cx, cy + 17, 7, '#fbc02d');
+        circle(cx, cy + 36, 7, '#43a047');
+        break;
+      case 'noOvertakeTruck':
+        circle(cx, cy, 60, '#ffffff', '#d01f1f', 14);
+        ctx.fillStyle = '#d01f1f';
+        ctx.fillRect(cx - 38, cy - 12, 30, 26);
+        ctx.fillStyle = '#111';
+        ctx.fillRect(cx + 4, cy - 12, 34, 26);
+        break;
+      case 'emergencyLane':
+        ctx.fillStyle = '#1d5fbf';
+        ctx.fillRect(ox + 6, oy + 6, C - 12, C - 12);
+        text('EMNİYET', cx, cy - 18, 20, '#fff');
+        text('ŞERİDİ', cx, cy + 6, 20, '#fff');
+        ctx.fillStyle = '#d01f1f';
+        ctx.fillRect(cx - 34, cy + 24, 68, 16);
+        text('GİRİLMEZ', cx, cy + 32, 13, '#fff');
         break;
       case 'stop': {
         ctx.beginPath();

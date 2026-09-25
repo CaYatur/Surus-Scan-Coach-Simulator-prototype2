@@ -1,4 +1,5 @@
 import { angleDiff, mulberry32 } from '../core/math';
+import { actionKeys } from '../input/bindings';
 import type { Lane } from '../world/roadNetwork';
 import type { Constraint, MissionDef, MissionHost, Step, StepCtx } from './mission';
 
@@ -90,7 +91,7 @@ export function laneChange(side: 'left' | 'right' | 'any', title: string): Step 
   let res = '';
   return {
     title,
-    hint: 'Önce ayna (Z/C), sonra sinyal (Q/E), omuz kontrolü (Shift+Z / Shift+C), sonra yavaşça şerit değiştirin.',
+    hint: `Önce ayna (${actionKeys('mirrorL')}/${actionKeys('mirrorR')}), sonra sinyal (${actionKeys('signalL')}/${actionKeys('signalR')}), omuz kontrolü (${actionKeys('shoulder')} + ayna tuşu), sonra yavaşça şerit değiştirin.`,
     start(h, c) {
       c.data.t0 = h.time();
       c.data.lane0 = h.player().lane;
@@ -104,10 +105,14 @@ export function laneChange(side: 'left' | 'right' | 'any', title: string): Step 
       // lane changed where it cannot be judged (e.g. right at a junction) — accept, but note it
       const p = h.player();
       const l0 = c.data.lane0 as number;
-      if (p.lane >= 0 && l0 >= 0 && p.lane !== l0 && (side === 'any' || (side === 'left') === p.lane > l0) && h.time() - (c.data.t0 as number) > 1) {
-        res = `${title}: kavşak yakınında değiştirildi (değerlendirilemedi)`;
-        return 'done';
-      }
+      // (give the monitor time to confirm the change first — it waits until the car settles in the lane)
+      if (p.lane >= 0 && l0 >= 0 && p.lane !== l0 && (side === 'any' || (side === 'left') === p.lane > l0)) {
+        c.data.diffT = ((c.data.diffT as number) ?? 0) + _dt;
+        if ((c.data.diffT as number) > 4) {
+          res = `${title}: kavşak yakınında değiştirildi (değerlendirilemedi)`;
+          return 'done';
+        }
+      } else c.data.diffT = 0;
       if (p.lane >= 0 && l0 < 0) c.data.lane0 = p.lane;
       return null;
     },
@@ -199,8 +204,8 @@ export function parkIn(title: string, bay: { x: number; z: number; heading: numb
   return {
     title,
     hint: opts.parallel
-      ? 'Öndeki aracın yanına hizalanın, geri vitese alın (S), sağa kırarak girin, sonra düzeltin. Durunca el freni (Space / B).'
-      : 'Yavaşça park yerine girin, çizgilere paralel durun. Durunca el freni (Space / B).',
+      ? 'Öndeki aracın yanına hizalanın, geri vitese alın, sağa kırarak girin, sonra düzeltin. Durunca el frenini çekin.'
+      : 'Yavaşça park yerine girin, çizgilere paralel durun. Durunca el frenini çekin.',
     start(h) {
       h.marker('bay', bay.x, bay.z, { kind: 'bay', heading: bay.heading, w: bay.w, l: bay.l, color: 0x3ddc84 });
       // Only navigate to kerbside slots; lot bays are reached by eye (the marker glows)
@@ -330,6 +335,72 @@ export function pickup(title: string, x: number, z: number, name: string): Step 
   };
 }
 
+/** Drive through a roundabout and on to a target beyond it. */
+export function roundaboutPass(title: string, target: { x: number; z: number; name: string }): Step {
+  return {
+    title,
+    hint: 'Göbeğe yaklaşırken yavaşlayın, içerideki araca yol verin; çıkmadan önce sağ sinyal verin.',
+    start(h, c) {
+      c.data.rb0 = h.monitor.stats.roundabouts.total;
+      h.navigate(target.x, target.z, target.name);
+      h.marker('goal', target.x, target.z, { kind: 'beacon', color: 0x35a7ff, label: target.name });
+    },
+    update(h, _dt, c) {
+      const p = h.player();
+      const passed = h.monitor.stats.roundabouts.total > (c.data.rb0 as number);
+      if (passed && Math.hypot(p.x - target.x, p.z - target.z) < 20) return 'done';
+      if (!passed && Math.hypot(p.x - target.x, p.z - target.z) < 12) {
+        // arrived without using the roundabout (detour) — re-route through it
+        return 'done';
+      }
+      return null;
+    },
+    end(h) {
+      h.clearMarker('goal');
+    },
+    result: () => null,
+  };
+}
+
+/** An emergency vehicle approaches from behind — make way. */
+export function emergencyEvent(title: string): Step {
+  let res = '';
+  return {
+    title,
+    hint: 'Sireni duyduğunuzda iç dikize bakın, sağa yanaşın ve yavaşlayın; geçmesine izin verin.',
+    voice: 'Arkadan ambulans geliyor. Yol verin.',
+    start(h, c) {
+      c.data.n0 = h.monitor.count('emergency_yield_ok') + h.monitor.count('emergency_yield_fail');
+      c.data.spawned = 0;
+    },
+    update(h, dt, c) {
+      c.data.retry = ((c.data.retry as number) ?? 0) - dt;
+      if (!c.data.spawned && (c.data.retry as number) <= 0) {
+        const p = h.player();
+        if (p.kmh > 15) {
+          const car = h.traffic.spawnEmergency(p, 100, 'ambulance');
+          if (car) {
+            c.data.spawned = 1;
+            h.toast('🚑 Arkadan sirenli ambulans geliyor!', 'warn');
+          }
+        }
+        c.data.retry = 2;
+      }
+      const n = h.monitor.count('emergency_yield_ok') + h.monitor.count('emergency_yield_fail');
+      if (n > (c.data.n0 as number)) {
+        res = h.monitor.count('emergency_yield_fail') ? 'Ambulansa yol verilmedi ✗' : 'Ambulansa yol verildi ✓';
+        return 'done';
+      }
+      if (c.data.spawned && c.t > 60) {
+        res = 'Ambulans değerlendirilemedi';
+        return 'done';
+      }
+      return null;
+    },
+    result: () => res,
+  };
+}
+
 // ———————————————————————————— constraints ————————————————————————————
 
 const noRedLight = (): Constraint => ({ title: 'Kırmızı ışık ihlali yok', ok: (h) => h.monitor.stats.redLights === 0 });
@@ -346,6 +417,12 @@ const comfort = (): Constraint => ({
   title: 'Yolcu konforu (sert fren/gaz/viraj yok)',
   ok: (h) => h.monitor.stats.hardBrake + h.monitor.stats.hardAccel + h.monitor.stats.harshCorner < 2,
 });
+const noShoulder = (): Constraint => ({ title: 'Emniyet şeridine girmeden', ok: (h) => h.monitor.count('shoulder_drive') === 0 });
+const noRightOvertake = (): Constraint => ({ title: 'Sağdan sollama yok', ok: (h) => h.monitor.stats.rightOvertakes === 0 });
+const rbRules = (): Constraint => ({ title: 'Göbekte yol verme + çıkış sinyali', ok: (h) => h.monitor.count('rb_yield_fail') + h.monitor.count('rb_no_exit_signal') === 0 });
+const zoneRules = (): Constraint => ({ title: 'Bölge hız sınırlarına uy', ok: (h) => h.monitor.count('zone_speeding') + h.monitor.count('speeding') === 0 });
+const noHorn = (): Constraint => ({ title: 'Korna yasağına uy', ok: (h) => h.monitor.stats.hornViolations === 0 });
+const yieldEmergency = (): Constraint => ({ title: 'Sirenli araca yol ver', ok: (h) => h.monitor.count('emergency_yield_fail') === 0 });
 const msmAll = (): Constraint => ({
   title: 'Tüm manevralarda ayna + sinyal',
   ok: (h) => h.monitor.count('no_signal_lane') + h.monitor.count('no_signal_turn') + h.monitor.count('no_mirror_lane') + h.monitor.count('no_mirror_turn') === 0,
@@ -634,6 +711,81 @@ export const MISSIONS: MissionDef[] = [
     skills: ['Şerit disiplini', 'MSM'],
     steps: (h) => [laneChange('left', 'Sol şeride geç'), laneChange('right', 'Sağ şeride dön'), laneChange('any', 'Bir şerit değişimi daha yap'), driveToLandmark(h, 'meydan', '🏛️ Belediye Meydanı\'na git')],
     constraints: () => [msmAll(), noCollision()],
+  },
+  {
+    id: 'highway',
+    title: 'Çevre Yolu (D-200)',
+    subtitle: 'Bölünmüş yolda hız, şerit ve viraj',
+    description:
+      'Şehir dışındaki 2×3 şeritli çevre yoluna çık. Akışa uygun hızlan, sollamayı soldan yapıp sağa dön, emniyet şeridine girme, virajı 90 km/h ile al ve Millet Bulvarı kavşağından şehre dön.',
+    map: 'city',
+    icon: '🛣️',
+    difficulty: 3,
+    minutes: 9,
+    category: 'city',
+    board: true,
+    conditions: { time: 'noon', weather: 'clear', traffic: 1 },
+    skills: ['Bölünmüş yol', 'Sollama', 'Hız bölgeleri'],
+    steps: (h) => [
+      driveTo('D-200 çevre yoluna çık (doğu yönü)', ...(Object.values(lanePoint(h, 200, 1166, Math.PI / 2)) as [number, number]), 'D-200 Çevre Yolu', { radius: 14 }),
+      reachSpeed(80, 'Akışa uy: 80 km/h üzerine çık (sınır 110)'),
+      laneChange('left', 'Sollama için sol şeride geç (ayna → sinyal → omuz)'),
+      laneChange('right', 'Sollamayı bitir, sağ şeride dön'),
+      driveTo('Virajı dönüp kuzeye devam et', ...(Object.values(lanePoint(h, 1326, 500, Math.PI)) as [number, number]), 'D-200 Kuzey yönü', { radius: 16 }),
+      driveToLandmark(h, 'hastane', '🏥 Millet Bulvarı kavşağından şehre dön — Hastane'),
+    ],
+    constraints: () => [noShoulder(), noRightOvertake(), noCollision(), noRedLight()],
+  },
+  {
+    id: 'roundabouts',
+    title: 'Göbekli Kavşaklar',
+    subtitle: 'Öncelik ve çıkış sinyali',
+    description: 'İki göbekli kavşaktan geç. Kavşak içindeki araç önceliklidir; girerken yol ver, çıkacağın yoldan önce sağ sinyal ver.',
+    map: 'city',
+    icon: '⭕',
+    difficulty: 2,
+    minutes: 7,
+    category: 'city',
+    board: true,
+    conditions: { time: 'noon', weather: 'clear', traffic: 1.3 },
+    skills: ['Göbekli kavşak', 'Geçiş önceliği', 'Sinyal'],
+    steps: (h) => [
+      roundaboutPass('⭕ Botanik göbeğinden batıya (Mevlana Cd.) çık', { ...lanePoint(h, 230, -320, -Math.PI / 2), name: 'Mevlana Caddesi' }),
+      roundaboutPass('⭕ Yıldırım göbeğinden güneye (İstiklal Cd.) çık', { ...lanePoint(h, -370, 440, 0), name: 'İstiklal Caddesi' }),
+    ],
+    constraints: () => [rbRules(), noCollision()],
+  },
+  {
+    id: 'zones',
+    title: 'Hız Bölgeleri Turu',
+    subtitle: '20 · 30 · 40 km/h bölgeler',
+    description: 'Yaya öncelikli çarşı (20), hastane (30, korna yasak), şehir merkezi (40) ve okul bölgesinden (30) geç. Levhaları takip et, bölge sınırlarına uy.',
+    map: 'city',
+    icon: '🚸',
+    difficulty: 2,
+    minutes: 8,
+    category: 'city',
+    board: true,
+    conditions: { time: 'morning', weather: 'clear', traffic: 1, peds: 1.3 },
+    skills: ['Levha okuma', 'Hız bölgeleri', 'Korna yasağı'],
+    steps: (h) => [driveToLandmark(h, 'carsi', '🛍️ Yaya öncelikli çarşıdan geç (20 km/h)'), driveToLandmark(h, 'hastane', '🏥 Hastane bölgesi (30 km/h, korna yasak)'), driveToLandmark(h, 'okul', '🏫 Okul bölgesi (30 km/h)', { stop: true })],
+    constraints: () => [zoneRules(), noHorn(), noPedHit()],
+  },
+  {
+    id: 'ambulance',
+    title: 'Ambulansa Yol Ver',
+    subtitle: 'Geçiş üstünlüğü',
+    description: 'Sürüş sırasında arkadan sirenli bir ambulans gelecek. Dikizden fark et, sağa yanaş, yavaşla ve geçmesine izin ver.',
+    map: 'city',
+    icon: '🚑',
+    difficulty: 2,
+    minutes: 5,
+    category: 'city',
+    board: true,
+    conditions: { time: 'noon', weather: 'clear', traffic: 0.9 },
+    skills: ['Geçiş üstünlüğü', 'Ayna kullanımı'],
+    steps: (h) => [reachSpeed(30, 'Yola çık, 30 km/h üzerine çık'), emergencyEvent('🚑 Ambulansa yol ver'), driveToLandmark(h, 'meydan', '🏛️ Belediye Meydanı\'na git')],
+    constraints: () => [yieldEmergency(), noCollision()],
   },
 ];
 

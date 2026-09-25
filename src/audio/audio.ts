@@ -15,6 +15,8 @@ export class AudioEngine {
   private windGain!: GainNode;
   private rainGain!: GainNode;
   private hornGain!: GainNode;
+  private sirenOsc!: OscillatorNode;
+  private sirenGain!: GainNode;
   private started = false;
   private tickPrev = false;
   private voice: SpeechSynthesisVoice | null = null;
@@ -94,6 +96,17 @@ export class AudioEngine {
       o.start();
     }
     this.hornGain.connect(this.master);
+    // siren (frequency driven per frame: two-tone for ambulance, wail for police)
+    this.sirenOsc = c.createOscillator();
+    this.sirenOsc.type = 'triangle';
+    this.sirenOsc.frequency.value = 800;
+    const sf = c.createBiquadFilter();
+    sf.type = 'lowpass';
+    sf.frequency.value = 2400;
+    this.sirenGain = c.createGain();
+    this.sirenGain.gain.value = 0;
+    this.sirenOsc.connect(sf).connect(this.sirenGain).connect(this.master);
+    this.sirenOsc.start();
     this.started = true;
     this.pickVoice();
     settings.on('change', () => this.applyVolume());
@@ -130,10 +143,11 @@ export class AudioEngine {
       this.tyreGain.gain.value = 0;
       this.windGain.gain.value = 0;
       this.hornGain.gain.value = 0;
+      this.sirenGain.gain.value = 0;
     }
   }
 
-  update(p: { rpm: number; throttle: number; kmh: number; slip: number; horn: boolean; blink: boolean; blinking: boolean; rain: number; interior: boolean }) {
+  update(p: { rpm: number; throttle: number; kmh: number; slip: number; horn: boolean; blink: boolean; blinking: boolean; rain: number; interior: boolean; siren?: { dist: number; police: boolean } | null }) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     const ev = settings.get().engineVolume;
@@ -147,6 +161,12 @@ export class AudioEngine {
     this.windGain.gain.setTargetAtTime(clamp(p.kmh / 110, 0, 1) * 0.16 * inside, t, 0.2);
     this.rainGain.gain.setTargetAtTime(p.rain * 0.08, t, 0.5);
     this.hornGain.gain.setTargetAtTime(p.horn ? 0.14 : 0, t, 0.01);
+    if (p.siren) {
+      const f = p.siren.police ? 750 + 550 * (0.5 - 0.5 * Math.cos((t % 2.6) / 2.6 * Math.PI * 2)) : t % 1.1 < 0.55 ? 960 : 770;
+      this.sirenOsc.frequency.setTargetAtTime(f, t, p.siren.police ? 0.05 : 0.01);
+      const vol = clamp(1 - p.siren.dist / 160, 0, 1) ** 1.5 * 0.12 * (p.interior ? 0.6 : 1);
+      this.sirenGain.gain.setTargetAtTime(vol, t, 0.1);
+    } else this.sirenGain.gain.setTargetAtTime(0, t, 0.2);
     // indicator relay tick
     if (p.blinking && p.blink !== this.tickPrev) this.click(p.blink ? 1800 : 1200, 0.025, 0.12);
     this.tickPrev = p.blink;

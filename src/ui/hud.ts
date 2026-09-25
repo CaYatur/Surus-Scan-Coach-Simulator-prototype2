@@ -112,7 +112,7 @@ export class Hud {
     this.stim = el('div', { class: 'stimulus hidden' });
     this.crashFlash = el('div', { class: 'crash-flash' });
     this.root.append(this.toasts, this.stim, this.crashFlash);
-    this.hintBar = el('div', { class: 'hint-bar', html: 'W/S gaz-fren · A/D direksiyon · Q/E sinyal · Z/C/X ayna · Shift+Z/C omuz · V kamera · M harita · J görevler · Esc menü · F1 yardım' });
+    this.hintBar = el('div', { class: 'hint-bar', html: '' });
     this.root.append(this.hintBar);
     this.fpsEl = el('div', { class: 'fps hidden' });
     this.root.append(this.fpsEl);
@@ -127,7 +127,7 @@ export class Hud {
     this.root.style.display = v ? '' : 'none';
   }
 
-  setCluster(s: { kmh: number; limit: number; gear: string; rpmFrac: number; sigL: boolean; sigR: boolean; blink: boolean; lights: boolean; handbrake: boolean; wipers: number; cam: string }) {
+  setCluster(s: { kmh: number; limit: number; gear: string; rpmFrac: number; sigL: boolean; sigR: boolean; blink: boolean; lights: boolean; handbrake: boolean; wipers: number; cam: string; cruise?: number | null; engineOff?: boolean; abs?: boolean; clutch?: number }) {
     this.speedVal.textContent = String(Math.round(s.kmh));
     const over = s.kmh > s.limit + 3;
     this.speedVal.classList.toggle('over', over);
@@ -144,7 +144,16 @@ export class Hud {
       `<span class="ti ${s.lights ? 'on-blue' : ''}" title="Farlar (L)">◐</span>` +
       `<span class="ti ${s.handbrake ? 'on-red' : ''}" title="El freni">(P)</span>` +
       `<span class="ti ${s.wipers ? 'on-green' : ''}" title="Silecek (I)">⌇</span>` +
+      (s.cruise ? `<span class="ti on-green" title="Hız sabitleyici (K)">⏲ ${s.cruise}</span>` : '') +
+      (s.engineOff ? `<span class="ti on-red" title="Motor durdu">MOTOR</span>` : '') +
+      (s.abs === false ? `<span class="ti" title="ABS kapalı">ABS✕</span>` : '') +
+      (s.clutch != null && s.clutch > 0.1 ? `<span class="ti on-blue" title="Debriyaj">D ${Math.round(s.clutch * 100)}%</span>` : '') +
       `<span class="ti cam" title="Kamera (V)">🎥 ${esc(s.cam)}</span>`;
+  }
+
+  /** Bottom hint line (built from the current key bindings). */
+  setHints(html: string) {
+    if (this.hintBar.innerHTML !== html) this.hintBar.innerHTML = html;
   }
 
   setHeadway(sec: number | null, wet: boolean) {

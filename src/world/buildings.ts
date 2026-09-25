@@ -27,7 +27,8 @@ export type MatKey =
   | 'dome'
   | 'water'
   | 'hedge'
-  | 'asphaltLot';
+  | 'asphaltLot'
+  | 'field';
 
 export type TreeKind = 'round' | 'cypress' | 'pine';
 export type TreeInst = { x: number; z: number; s: number; kind: TreeKind; rot: number; y?: number };
@@ -641,7 +642,20 @@ export function fillBlock(ctx: BuildCtx, blk: Block, isOuter: boolean) {
       addSolid(ctx, r.minX, r.maxX, r.minZ, r.maxZ);
       break;
     }
+    case 'farm':
+      farm(ctx, r, blk);
+      break;
+    case 'forest':
+      forest(ctx, r);
+      break;
+    case 'fuel':
+      fuelStation(ctx, r, blk);
+      break;
     case 'industrial': {
+      if (W > 200 || D > 200) {
+        logistics(ctx, r);
+        break;
+      }
       groundRect(ctx, 'concrete', r);
       perimeterWall(ctx, r, 'fence');
       const n = W > 90 ? 2 : 1;
@@ -818,4 +832,242 @@ function outskirts(ctx: BuildCtx, blk: Block) {
       house(ctx, x, z, 11, 9);
     }
   }
+}
+
+
+// ——————————————————————————— countryside ———————————————————————————
+
+const CROPS = [
+  { base: '#c9b25a', row: '#b39a45' }, // wheat
+  { base: '#6f9440', row: '#5b7c33' }, // young crop
+  { base: '#7b5b3e', row: '#684a31' }, // ploughed
+  { base: '#9bb466', row: '#88a257' }, // fallow
+  { base: '#b7a13a', row: '#a18c2d' }, // sunflower
+  { base: '#577d35', row: '#4a6b2c' }, // orchard green
+];
+
+/** Agricultural parcels with crop rows, wind-break trees and the odd farmstead. */
+function farm(ctx: BuildCtx, r: Rect, blk: Block) {
+  const { rng } = ctx;
+  const W = r.maxX - r.minX;
+  const D = r.maxZ - r.minZ;
+  const alongX = W >= D;
+  const len = alongX ? W : D;
+  const b = ctx.b.field;
+  const y = 0.03;
+  let t = 0;
+  while (t < len - 8) {
+    const pw = Math.min(len - t, randRange(rng, 28, 70));
+    const crop = pick(rng, CROPS);
+    const p: Rect = alongX
+      ? { minX: r.minX + t + 1, maxX: r.minX + t + pw - 1, minZ: r.minZ + 1, maxZ: r.maxZ - 1 }
+      : { minX: r.minX + 1, maxX: r.maxX - 1, minZ: r.minZ + t + 1, maxZ: r.minZ + t + pw - 1 };
+    b.setColor(crop.base);
+    b.flatRect(p.minX, p.maxX, p.minZ, p.maxZ, y);
+    // crop rows run across the parcel
+    b.setColor(crop.row);
+    const rowsAlongZ = rng() < 0.5;
+    if (rowsAlongZ) for (let x = p.minX + 1.5; x < p.maxX - 1; x += 3) b.flatRect(x, x + 1.1, p.minZ + 1, p.maxZ - 1, y + 0.01);
+    else for (let z = p.minZ + 1.5; z < p.maxZ - 1; z += 3) b.flatRect(p.minX + 1, p.maxX - 1, z, z + 1.1, y + 0.01);
+    // hay bales on harvested wheat
+    if (crop === CROPS[0] && rng() < 0.6) {
+      ctx.b.trim.setColor('#d9c07a');
+      for (let i = 0; i < 6; i++) {
+        const hx = randRange(rng, p.minX + 4, p.maxX - 4);
+        const hz = randRange(rng, p.minZ + 4, p.maxZ - 4);
+        ctx.b.trim.cylinder(hx, hz, 0, 1.3, 0.75, 0.75, 10);
+        ctx.colliders.add({ kind: 'circle', x: hx, z: hz, r: 0.8, tag: 'barrier' });
+      }
+      b.setColor(crop.row);
+    }
+    // wind-break row on the parcel edge
+    if (rng() < 0.35) {
+      const kind: TreeKind = rng() < 0.5 ? 'cypress' : 'round';
+      for (let u = 4; u < (alongX ? D : W) - 4; u += kind === 'cypress' ? 5 : 8) {
+        const x = alongX ? p.maxX + 1 : p.minX + u;
+        const z = alongX ? p.minZ + u : p.maxZ + 1;
+        ctx.trees.push({ x, z, s: randRange(rng, 0.9, 1.3), kind, rot: rng() * 6.28, y: 0 });
+        ctx.colliders.add({ kind: 'circle', x, z, r: 0.35, tag: 'tree' });
+      }
+    }
+    t += pw;
+  }
+  // Farmstead near a frontage road
+  if (rng() < 0.45 && W > 60 && D > 60) {
+    const fronts = (['N', 'S', 'E', 'W'] as Dir4[]).filter((d) => blk.frontage[d]);
+    const f = fronts.length ? pick(rng, fronts) : 'N';
+    const u = randRange(rng, 0.25, 0.75);
+    const cx = f === 'E' ? r.maxX - 22 : f === 'W' ? r.minX + 22 : r.minX + W * u;
+    const cz = f === 'S' ? r.maxZ - 22 : f === 'N' ? r.minZ + 22 : r.minZ + D * u;
+    ctx.b.concrete.setColor('#a58f72');
+    ctx.b.concrete.flatRect(cx - 18, cx + 18, cz - 16, cz + 16, 0.05, 1 / 6);
+    house(ctx, cx - 7, cz, 10, 9);
+    // barn: red walls + gable roof
+    const bx0 = cx + 3;
+    const bx1 = cx + 15;
+    const bz0 = cz - 7;
+    const bz1 = cz + 7;
+    ctx.b.trim.setColor('#8e2f26');
+    ctx.b.trim.box(bx0, bx1, Y0, Y0 + 5, bz0, bz1);
+    ctx.b.metal.setColor('#5d6368');
+    const ridge = Y0 + 8;
+    ctx.b.metal.quad({ x: bx0 - 0.4, y: Y0 + 5, z: bz0 - 0.4 }, { x: bx0 - 0.4, y: Y0 + 5, z: bz1 + 0.4 }, { x: (bx0 + bx1) / 2, y: ridge, z: bz1 + 0.4 }, { x: (bx0 + bx1) / 2, y: ridge, z: bz0 - 0.4 });
+    ctx.b.metal.quad({ x: bx1 + 0.4, y: Y0 + 5, z: bz1 + 0.4 }, { x: bx1 + 0.4, y: Y0 + 5, z: bz0 - 0.4 }, { x: (bx0 + bx1) / 2, y: ridge, z: bz0 - 0.4 }, { x: (bx0 + bx1) / 2, y: ridge, z: bz1 + 0.4 });
+    ctx.b.trim.setColor('#8e2f26');
+    ctx.b.trim.tri({ x: bx0, y: Y0 + 5, z: bz1 }, { x: bx1, y: Y0 + 5, z: bz1 }, { x: (bx0 + bx1) / 2, y: ridge, z: bz1 });
+    ctx.b.trim.tri({ x: bx1, y: Y0 + 5, z: bz0 }, { x: bx0, y: Y0 + 5, z: bz0 }, { x: (bx0 + bx1) / 2, y: ridge, z: bz0 });
+    addSolid(ctx, bx0, bx1, bz0, bz1);
+    // silo
+    ctx.b.metal.setColor('#c4c9cc');
+    ctx.b.metal.cylinder(cx + 9, cz + 11, 0, 12, 2.2, 2.2, 14);
+    ctx.b.metal.dome(cx + 9, 12, cz + 11, 2.2, 12, 4, 0.6);
+    ctx.colliders.add({ kind: 'circle', x: cx + 9, z: cz + 11, r: 2.3, tag: 'building' });
+    scatterTreesAt(ctx, cx - 16, cz - 14, cx + 16, cz + 14, 5);
+  }
+}
+
+function scatterTreesAt(ctx: BuildCtx, x0: number, z0: number, x1: number, z1: number, n: number) {
+  const { rng } = ctx;
+  for (let i = 0; i < n; i++) {
+    const x = randRange(rng, x0, x1);
+    const z = randRange(rng, z0, z1);
+    ctx.trees.push({ x, z, s: randRange(rng, 0.9, 1.4), kind: 'round', rot: rng() * 6.28, y: 0 });
+    ctx.colliders.add({ kind: 'circle', x, z, r: 0.4, tag: 'tree' });
+  }
+}
+
+/** Pine forest patch with a darker undergrowth floor. */
+function forest(ctx: BuildCtx, r: Rect) {
+  const { rng } = ctx;
+  ctx.b.field.setColor('#44582f');
+  ctx.b.field.flatRect(r.minX, r.maxX, r.minZ, r.maxZ, 0.025);
+  const area = (r.maxX - r.minX) * (r.maxZ - r.minZ);
+  const n = Math.min(260, Math.floor(area / 380));
+  for (let i = 0; i < n; i++) {
+    const x = randRange(rng, r.minX + 3, r.maxX - 3);
+    const z = randRange(rng, r.minZ + 3, r.maxZ - 3);
+    ctx.trees.push({ x, z, s: randRange(rng, 1.1, 2.0), kind: rng() < 0.8 ? 'pine' : 'round', rot: rng() * 6.28, y: 0 });
+    ctx.colliders.add({ kind: 'circle', x, z, r: 0.5, tag: 'tree' });
+  }
+}
+
+/** Filling station on the frontage road (canopy, pumps, shop, price pylon) + fields behind. */
+function fuelStation(ctx: BuildCtx, r: Rect, blk: Block) {
+  const { rng } = ctx;
+  const f: Dir4 = blk.frontage.W ? 'W' : blk.frontage.N ? 'N' : blk.frontage.E ? 'E' : 'S';
+  // Station footprint (60 × 45) against the frontage side near the town end of the block
+  const SW = 60;
+  const SD = 45;
+  let st: Rect;
+  if (f === 'W') st = { minX: r.minX, maxX: r.minX + SD, minZ: r.minZ + 8, maxZ: r.minZ + 8 + SW };
+  else if (f === 'E') st = { minX: r.maxX - SD, maxX: r.maxX, minZ: r.minZ + 8, maxZ: r.minZ + 8 + SW };
+  else if (f === 'N') st = { minX: (r.minX + r.maxX) / 2 - SW / 2, maxX: (r.minX + r.maxX) / 2 + SW / 2, minZ: r.minZ, maxZ: r.minZ + SD };
+  else st = { minX: (r.minX + r.maxX) / 2 - SW / 2, maxX: (r.minX + r.maxX) / 2 + SW / 2, minZ: r.maxZ - SD, maxZ: r.maxZ };
+  groundRect(ctx, 'asphaltLot', st, 0.05);
+  const cx = (st.minX + st.maxX) / 2;
+  const cz = (st.minZ + st.maxZ) / 2;
+  const ns = f === 'W' || f === 'E';
+  // canopy
+  const cw = ns ? 14 : 26;
+  const cd = ns ? 26 : 14;
+  const ccx = f === 'W' ? st.minX + 14 : f === 'E' ? st.maxX - 14 : cx;
+  const ccz = f === 'N' ? st.minZ + 14 : f === 'S' ? st.maxZ - 14 : cz;
+  ctx.b.trim.setColor('#f4f4f4');
+  ctx.b.trim.box(ccx - cw / 2, ccx + cw / 2, 5.2, 6.0, ccz - cd / 2, ccz + cd / 2);
+  ctx.b.trim.setColor('#d32f2f');
+  ctx.b.trim.box(ccx - cw / 2 - 0.05, ccx + cw / 2 + 0.05, 5.5, 5.95, ccz - cd / 2 - 0.05, ccz + cd / 2 + 0.05, { top: false });
+  ctx.b.metal.setColor('#c7ccd0');
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const px = ccx + sx * (cw / 2 - 2);
+      const pz = ccz + sz * (cd / 2 - 3);
+      ctx.b.metal.box(px - 0.25, px + 0.25, 0, 5.2, pz - 0.25, pz + 0.25);
+      ctx.colliders.add({ kind: 'circle', x: px, z: pz, r: 0.4, tag: 'pole' });
+    }
+  }
+  // pump islands
+  for (let i = -1; i <= 1; i += 2) {
+    const px = ns ? ccx : ccx + i * 5;
+    const pz = ns ? ccz + i * 5 : ccz;
+    ctx.b.concrete.setColor('#bdbab2');
+    ctx.b.concrete.box(px - (ns ? 0.9 : 3), px + (ns ? 0.9 : 3), 0, 0.2, pz - (ns ? 3 : 0.9), pz + (ns ? 3 : 0.9));
+    for (const k of [-1.6, 1.6]) {
+      const qx = ns ? px : px + k;
+      const qz = ns ? pz + k : pz;
+      ctx.b.trim.setColor('#e53935');
+      ctx.b.trim.box(qx - 0.4, qx + 0.4, 0.2, 1.9, qz - 0.3, qz + 0.3);
+      ctx.b.trim.setColor('#263238');
+      ctx.b.trim.box(qx - 0.42, qx + 0.42, 1.2, 1.6, qz - 0.32, qz + 0.32, { top: false });
+    }
+    ctx.colliders.add({ kind: 'box', minX: px - (ns ? 0.9 : 3), maxX: px + (ns ? 0.9 : 3), minZ: pz - (ns ? 3 : 0.9), maxZ: pz + (ns ? 3 : 0.9), tag: 'barrier' });
+  }
+  // shop
+  const shop: Rect =
+    f === 'W'
+      ? { minX: st.maxX - 14, maxX: st.maxX - 2, minZ: cz - 9, maxZ: cz + 9 }
+      : f === 'E'
+        ? { minX: st.minX + 2, maxX: st.minX + 14, minZ: cz - 9, maxZ: cz + 9 }
+        : f === 'N'
+          ? { minX: cx - 9, maxX: cx + 9, minZ: st.maxZ - 14, maxZ: st.maxZ - 2 }
+          : { minX: cx - 9, maxX: cx + 9, minZ: st.minZ + 2, maxZ: st.minZ + 14 };
+  storefront(ctx, shop.minX, shop.maxX, shop.minZ, shop.maxZ, 4.2);
+  ctx.b.roof.setColor('#ffffff');
+  ctx.b.roof.flatRect(shop.minX, shop.maxX, shop.minZ, shop.maxZ, 4.2);
+  addSolid(ctx, shop.minX, shop.maxX, shop.minZ, shop.maxZ);
+  // price pylon at the road
+  const px = f === 'W' ? st.minX + 2 : f === 'E' ? st.maxX - 2 : st.minX + 3;
+  const pz = f === 'N' ? st.minZ + 2 : f === 'S' ? st.maxZ - 2 : st.minZ + 3;
+  ctx.b.trim.setColor('#b71c1c');
+  ctx.b.trim.box(px - 0.8, px + 0.8, 0, 8.5, pz - 0.3, pz + 0.3);
+  ctx.colliders.add({ kind: 'box', minX: px - 0.8, maxX: px + 0.8, minZ: pz - 0.3, maxZ: pz + 0.3, tag: 'barrier' });
+  const faceRot = f === 'W' ? -Math.PI / 2 : f === 'E' ? Math.PI / 2 : f === 'N' ? Math.PI : 0;
+  const fx = Math.sin(faceRot) * 0.32;
+  const fz = Math.cos(faceRot) * 0.32;
+  ctx.signBoards.push({ x: px + fx, y: 7.2, z: pz + fz, rot: faceRot, text: 'AKARYAKIT', w: 1.5, h: 1.4, bg: '#b71c1c', fg: '#ffffff' });
+  ctx.signBoards.push({ x: px + fx, y: 5.6, z: pz + fz, rot: faceRot, text: 'Benzin 47.90', w: 1.5, h: 0.6, bg: '#101418', fg: '#ffd54f' });
+  ctx.signBoards.push({ x: px + fx, y: 4.9, z: pz + fz, rot: faceRot, text: 'Motorin 49.20', w: 1.5, h: 0.6, bg: '#101418', fg: '#ffd54f' });
+  // parked car spots are cones for now + fields for the rest of the block
+  ctx.cones.push({ x: st.minX + 4, z: st.maxZ - 4, rot: 0, y: 0.05 });
+  const rest: Rect =
+    f === 'W' || f === 'E'
+      ? { minX: r.minX, maxX: r.maxX, minZ: st.maxZ + 6, maxZ: r.maxZ }
+      : f === 'N'
+        ? { minX: r.minX, maxX: r.maxX, minZ: st.maxZ + 6, maxZ: r.maxZ }
+        : { minX: r.minX, maxX: r.maxX, minZ: r.minZ, maxZ: st.minZ - 6 };
+  if (rest.maxX - rest.minX > 20 && rest.maxZ - rest.minZ > 20) farm(ctx, rest, { ...blk, frontage: { N: false, S: false, E: false, W: false } });
+  if (rng() < 0.5) scatterTreesAt(ctx, st.minX + 2, st.maxZ + 1, st.maxX - 2, st.maxZ + 5, 4);
+}
+
+/** Large logistics / industrial estate: rows of warehouses, truck yards, fences. */
+function logistics(ctx: BuildCtx, r: Rect) {
+  const { rng } = ctx;
+  groundRect(ctx, 'concrete', r, 0.04);
+  perimeterWall(ctx, { ...r }, 'fence');
+  const cols = Math.max(1, Math.floor((r.maxX - r.minX - 20) / 85));
+  const rows = Math.max(1, Math.floor((r.maxZ - r.minZ - 20) / 75));
+  const cw = (r.maxX - r.minX - 20) / cols;
+  const rd = (r.maxZ - r.minZ - 20) / rows;
+  for (let i = 0; i < cols; i++) {
+    for (let j = 0; j < rows; j++) {
+      const x0 = r.minX + 10 + i * cw + 8;
+      const x1 = x0 + cw - 16;
+      const z0 = r.minZ + 10 + j * rd + 8;
+      const z1 = z0 + rd * 0.55;
+      if (rng() < 0.18) {
+        // truck yard
+        groundRect(ctx, 'asphaltLot', { minX: x0, maxX: x1, minZ: z0, maxZ: z0 + rd - 16 }, 0.06);
+        continue;
+      }
+      const h = randRange(rng, 9, 14);
+      facadeBox(ctx, 'industrial', pick(rng, ['#ffffff', '#e6eef2', '#f2ebe0', '#dfe6ea']), x0, x1, 0, h, z0, z1);
+      ctx.b.roof.setColor('#ffffff');
+      ctx.b.roof.flatRect(x0, x1, z0, z1, h);
+      // loading docks
+      ctx.b.trim.setColor('#37474f');
+      for (let x = x0 + 4; x < x1 - 4; x += 7) ctx.b.trim.box(x, x + 3.6, 0.3, 4.2, z1 - 0.1, z1 + 0.05, { top: false });
+      addSolid(ctx, x0, x1, z0, z1);
+    }
+  }
+  // Company sign
+  ctx.signBoards.push({ x: (r.minX + r.maxX) / 2, y: 4, z: r.minZ - 0.3, rot: Math.PI, text: 'LOJİSTİK MERKEZİ', w: 14, h: 1.6, bg: '#0d47a1', fg: '#ffffff' });
 }

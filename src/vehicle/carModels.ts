@@ -1,8 +1,26 @@
 import * as THREE from 'three';
 import { MeshBuilder } from '../world/meshBuilder';
 
-export type CarType = 'hatch' | 'sedan' | 'suv' | 'van' | 'taxi' | 'bus' | 'truck';
-export const CAR_TYPES: CarType[] = ['hatch', 'sedan', 'suv', 'van', 'taxi', 'bus', 'truck'];
+export type CarType =
+  | 'hatch'
+  | 'sedan'
+  | 'suv'
+  | 'van'
+  | 'taxi'
+  | 'bus'
+  | 'truck'
+  | 'wagon'
+  | 'pickup'
+  | 'minibus'
+  | 'police'
+  | 'ambulance'
+  | 'tir'
+  | 'trailer'
+  | 'moto';
+export const CAR_TYPES: CarType[] = ['hatch', 'sedan', 'suv', 'van', 'taxi', 'bus', 'truck', 'wagon', 'pickup', 'minibus', 'police', 'ambulance', 'tir', 'trailer', 'moto'];
+
+/** Tractor + semi-trailer rig: overall length and where each part sits relative to the rig centre. */
+export const TIR_RIG = { length: 16.4, width: 2.5, tractorOffset: 16.4 / 2 - 3.1, trailerOffset: -16.4 / 2 + 6.8 };
 
 export type CarDims = {
   length: number;
@@ -32,6 +50,9 @@ export type CarParts = {
   wheel: THREE.BufferGeometry;
   wheels: WheelSpec[];
   dims: CarDims;
+  /** Emergency beacons (two alternating groups), if any. */
+  beaconA?: THREE.BufferGeometry;
+  beaconB?: THREE.BufferGeometry;
 };
 
 type P2 = [number, number];
@@ -125,7 +146,7 @@ type Spec = {
   axleBias?: number;
 };
 
-const SPECS: Record<Exclude<CarType, 'taxi' | 'bus' | 'truck' | 'van'>, Spec> = {
+const SPECS: Record<'hatch' | 'sedan' | 'suv' | 'wagon', Spec> = {
   hatch: {
     dims: { length: 4.05, width: 1.76, height: 1.48, wheelBase: 2.55, wheelRadius: 0.31 },
     groundY: 0.27,
@@ -242,6 +263,46 @@ const SPECS: Record<Exclude<CarType, 'taxi' | 'bus' | 'truck' | 'van'>, Spec> = 
         [L - 1.85, 1.69],
         [-L + 0.22, 1.71],
         [-L + 0.14, 1.63],
+      ];
+    },
+  },
+  wagon: {
+    dims: { length: 4.7, width: 1.8, height: 1.5, wheelBase: 2.72, wheelRadius: 0.32 },
+    groundY: 0.28,
+    cabinInset: 0.12,
+    body: (d) => {
+      const L = d.length / 2;
+      return [
+        ...archedBottom(-L + 0.1, L - 0.1, 0.28, [
+          { z: d.rearAxle, r: d.wheelRadius + 0.15 },
+          { z: d.frontAxle, r: d.wheelRadius + 0.15 },
+        ]),
+        [L, 0.42],
+        [L + 0.02, 0.62],
+        [L - 0.25, 0.77],
+        [L - 1.2, 0.9],
+        [-L + 0.2, 0.98],
+        [-L + 0.04, 0.9],
+        [-L, 0.6],
+        [-L + 0.02, 0.4],
+      ];
+    },
+    cabin: (d) => {
+      const L = d.length / 2;
+      return [
+        [L - 1.18, 0.89],
+        [L - 1.98, 1.4],
+        [-L + 0.3, 1.43],
+        [-L + 0.1, 0.97],
+      ];
+    },
+    roof: (d) => {
+      const L = d.length / 2;
+      return [
+        [L - 1.93, 1.39],
+        [L - 2.08, 1.47],
+        [-L + 0.36, 1.5],
+        [-L + 0.2, 1.42],
       ];
     },
   },
@@ -364,8 +425,8 @@ function assemble(
   };
 }
 
-function buildStandard(type: 'hatch' | 'sedan' | 'suv' | 'taxi'): CarParts {
-  const spec = SPECS[type === 'taxi' ? 'sedan' : type];
+function buildStandard(type: 'hatch' | 'sedan' | 'suv' | 'taxi' | 'wagon' | 'police'): CarParts {
+  const spec = SPECS[type === 'taxi' || type === 'police' ? 'sedan' : type];
   const d = withAxles(spec.dims);
   const paint = new MeshBuilder();
   const trim = new MeshBuilder();
@@ -415,9 +476,33 @@ function buildStandard(type: 'hatch' | 'sedan' | 'suv' | 'taxi'): CarParts {
     for (const sx of [-1, 1]) trim.orientedBox(sx * (d.width / 2 + 0.003), 0.72, -0.1, 0.01, 0.07, 2.4);
   }
   // third brake light
-  if (type === 'sedan' || type === 'taxi') tail.orientedBox(0, cab[3][1] + 0.06, cab[3][0] + 0.02, 0.3, 0.035, 0.05);
+  if (type === 'sedan' || type === 'taxi' || type === 'police') tail.orientedBox(0, cab[3][1] + 0.06, cab[3][0] + 0.02, 0.3, 0.035, 0.05);
   else tail.orientedBox(0, cab[2][1] - 0.06, cab[2][0] - 0.1, 0.3, 0.035, 0.05);
-  return assemble(d, paint, trim, glass, head, tail, indL, indR);
+  if (type === 'wagon') {
+    trim.setColor('#2a2c30');
+    for (const sx of [-1, 1]) trim.orientedBox(sx * 0.6, 1.52, -0.3, 0.04, 0.04, 2.3);
+  }
+  let beaconA: THREE.BufferGeometry | undefined;
+  let beaconB: THREE.BufferGeometry | undefined;
+  if (type === 'police') {
+    // blue livery stripe + light bar
+    trim.setColor('#0d3b8c');
+    for (const sx of [-1, 1]) trim.orientedBox(sx * (d.width / 2 + 0.004), 0.7, 0, 0.012, 0.16, d.length - 0.6);
+    trim.setColor('#1a1a1a');
+    trim.orientedBox(0, 1.47, -0.25, 1.1, 0.06, 0.32);
+    const a = new MeshBuilder();
+    const b = new MeshBuilder();
+    a.orientedBox(-0.3, 1.55, -0.25, 0.46, 0.12, 0.26);
+    b.orientedBox(0.3, 1.55, -0.25, 0.46, 0.12, 0.26);
+    a.orientedBox(-0.35, 0.62, d.length / 2 - 0.05, 0.12, 0.06, 0.04);
+    b.orientedBox(0.35, 0.62, d.length / 2 - 0.05, 0.12, 0.06, 0.04);
+    beaconA = a.build();
+    beaconB = b.build();
+  }
+  const parts = assemble(d, paint, trim, glass, head, tail, indL, indR);
+  parts.beaconA = beaconA;
+  parts.beaconB = beaconB;
+  return parts;
 }
 
 function buildVan(): CarParts {
@@ -567,19 +652,299 @@ function buildTruck(): CarParts {
   return assemble(d, paint, trim, glass, head, tail, indL, indR, 0.3);
 }
 
+function builders() {
+  return {
+    paint: new MeshBuilder(),
+    trim: new MeshBuilder(),
+    glass: new MeshBuilder(),
+    head: new MeshBuilder(),
+    tail: new MeshBuilder(),
+    indL: new MeshBuilder(),
+    indR: new MeshBuilder(),
+  };
+}
+
+/** Box-bodied van variants: minibus (dolmuş) and ambulance. */
+function buildBoxVan(kind: 'minibus' | 'ambulance'): CarParts {
+  const amb = kind === 'ambulance';
+  const d = withAxles({ length: amb ? 5.9 : 6.4, width: 2.02, height: amb ? 2.65 : 2.55, wheelBase: amb ? 3.6 : 3.9, wheelRadius: 0.36 }, 0.1);
+  const { paint, trim, glass, head, tail, indL, indR } = builders();
+  const L = d.length / 2;
+  const W = d.width / 2;
+  const H = d.height;
+  const body: P2[] = [
+    ...archedBottom(-L + 0.1, L - 0.1, 0.32, [
+      { z: d.rearAxle, r: d.wheelRadius + 0.16 },
+      { z: d.frontAxle, r: d.wheelRadius + 0.16 },
+    ]),
+    [L, 0.5],
+    [L + 0.02, 0.9],
+    [L - 0.25, 1.15],
+    [L - 0.9, H - 0.08],
+    [L - 1.1, H],
+    [-L + 0.1, H],
+    [-L, H - 0.1],
+    [-L, 0.5],
+  ];
+  paint.geometry(extrudeProfile(body, d.width, 0.09, 3), new THREE.Matrix4());
+  // windshield
+  const ws: P2[] = [
+    [L - 0.27, 1.18],
+    [L - 0.88, H - 0.2],
+    [L - 0.96, H - 0.2],
+    [L - 0.35, 1.18],
+  ];
+  glass.geometry(extrudeProfile(ws, d.width - 0.24, 0.02, 1), new THREE.Matrix4().makeTranslation(0, 0.005, 0.04));
+  for (const sx of [-1, 1]) {
+    glass.orientedBox(sx * (W + 0.005), 1.62, L - 1.2, 0.02, 0.7, 0.9);
+    if (!amb) glass.orientedBox(sx * (W + 0.005), 1.68, -0.5, 0.02, 0.62, d.length - 3.2);
+    else glass.orientedBox(sx * (W + 0.005), 1.9, -0.9, 0.02, 0.4, 0.9);
+  }
+  glass.orientedBox(0, 1.8, -L - 0.005, d.width - 0.7, 0.6, 0.02);
+  commonDetails(d, trim, head, tail, indL, indR, paint, {
+    noseY: 0.82,
+    tailY: 1.0,
+    mirrorY: 1.75,
+    mirrorZ: L - 0.95,
+    lowerY: 0.32,
+    fz: (y) => surfaceZ(body, y, true) + 0.08,
+    rz: (y) => surfaceZ(body, y, false) - 0.08,
+  });
+  let beaconA: THREE.BufferGeometry | undefined;
+  let beaconB: THREE.BufferGeometry | undefined;
+  if (amb) {
+    // red + yellow reflective bands, light bar and rear beacons
+    trim.setColor('#d32f2f');
+    for (const sx of [-1, 1]) trim.orientedBox(sx * (W + 0.006), 1.15, -0.3, 0.012, 0.22, d.length - 1.2);
+    trim.setColor('#f9c21a');
+    for (const sx of [-1, 1]) trim.orientedBox(sx * (W + 0.006), 0.92, -0.3, 0.012, 0.16, d.length - 1.2);
+    trim.setColor('#d32f2f');
+    trim.orientedBox(0, 1.75, L + 0.005, 0.9, 0.18, 0.02);
+    const a = new MeshBuilder();
+    const b = new MeshBuilder();
+    a.orientedBox(-0.45, H + 0.1, L - 1.3, 0.5, 0.16, 0.3);
+    b.orientedBox(0.45, H + 0.1, L - 1.3, 0.5, 0.16, 0.3);
+    a.orientedBox(-W + 0.15, H - 0.12, -L + 0.08, 0.18, 0.18, 0.12);
+    b.orientedBox(W - 0.15, H - 0.12, -L + 0.08, 0.18, 0.18, 0.12);
+    beaconA = a.build();
+    beaconB = b.build();
+  } else {
+    // dolmuş: stripe + roof sign
+    trim.setColor('#1f5fa8');
+    for (const sx of [-1, 1]) trim.orientedBox(sx * (W + 0.006), 1.12, -0.2, 0.012, 0.14, d.length - 1);
+    trim.setColor('#222222');
+    trim.orientedBox(0, H + 0.03, L - 1.4, 0.9, 0.06, 0.25);
+    head.orientedBox(0, H + 0.14, L - 1.4, 0.84, 0.18, 0.2);
+  }
+  const parts = assemble(d, paint, trim, glass, head, tail, indL, indR, 0.24);
+  parts.beaconA = beaconA;
+  parts.beaconB = beaconB;
+  return parts;
+}
+
+function buildPickup(): CarParts {
+  const d = withAxles({ length: 5.3, width: 1.86, height: 1.8, wheelBase: 3.1, wheelRadius: 0.38 }, -0.1);
+  const { paint, trim, glass, head, tail, indL, indR } = builders();
+  const L = d.length / 2;
+  const W = d.width / 2;
+  const body: P2[] = [
+    ...archedBottom(-L + 0.1, L - 0.1, 0.42, [
+      { z: d.rearAxle, r: d.wheelRadius + 0.17 },
+      { z: d.frontAxle, r: d.wheelRadius + 0.17 },
+    ]),
+    [L, 0.58],
+    [L + 0.02, 0.9],
+    [L - 0.2, 1.08],
+    [L - 1.1, 1.14],
+    [-L, 1.14],
+    [-L, 0.55],
+  ];
+  paint.geometry(extrudeProfile(body, d.width, 0.08, 3), new THREE.Matrix4());
+  // cab
+  const cab: P2[] = [
+    [L - 1.08, 1.12],
+    [L - 1.72, 1.74],
+    [-0.35, 1.76],
+    [-0.4, 1.12],
+  ];
+  glass.geometry(extrudeProfile(cab, d.width - 0.26, 0.06, 2), new THREE.Matrix4());
+  const roof: P2[] = [
+    [L - 1.68, 1.72],
+    [L - 1.8, 1.8],
+    [-0.36, 1.81],
+    [-0.4, 1.73],
+  ];
+  paint.geometry(extrudeProfile(roof, d.width - 0.22, 0.04, 1), new THREE.Matrix4());
+  // bed walls (hollow cargo box)
+  trim.setColor('#1d1f22');
+  trim.box(-W + 0.12, W - 0.12, 1.1, 1.13, -L + 0.2, -0.45);
+  for (const sx of [-1, 1]) paint.orientedBox(sx * (W - 0.05), 1.28, (-L - 0.45) / 2 + 0.05, 0.1, 0.36, L - 0.55);
+  paint.orientedBox(0, 1.28, -L + 0.08, d.width - 0.1, 0.36, 0.1);
+  commonDetails(d, trim, head, tail, indL, indR, paint, {
+    noseY: 0.9,
+    tailY: 1.05,
+    mirrorY: 1.3,
+    mirrorZ: L - 1.3,
+    lowerY: 0.42,
+    fz: (y) => surfaceZ(body, y, true) + 0.08,
+    rz: (y) => surfaceZ(body, y, false) - 0.08,
+  });
+  return assemble(d, paint, trim, glass, head, tail, indL, indR, 0.26);
+}
+
+/** Cab-over tractor unit of an articulated lorry (the trailer is a separate model). */
+function buildTractor(): CarParts {
+  const d = withAxles({ length: 6.2, width: 2.5, height: 3.6, wheelBase: 3.6, wheelRadius: 0.52 }, 0.2);
+  const { paint, trim, glass, head, tail, indL, indR } = builders();
+  const L = d.length / 2;
+  const W = d.width / 2;
+  paint.orientedBox(0, 2.05, L - 1.15, d.width, 2.7, 2.3);
+  paint.orientedBox(0, 3.55, L - 1.3, d.width - 0.3, 0.4, 1.9);
+  glass.orientedBox(0, 2.6, L + 0.01, d.width - 0.3, 1.0, 0.04);
+  for (const sx of [-1, 1]) glass.orientedBox(sx * (W + 0.005), 2.6, L - 0.7, 0.02, 0.8, 0.9);
+  trim.setColor('#222428');
+  trim.orientedBox(0, 0.85, -0.6, 1.2, 0.35, d.length - 1.2);
+  trim.orientedBox(0, 1.2, -L + 1.2, 2.3, 0.12, 1.8); // fifth-wheel plate
+  trim.orientedBox(0, 1.0, L + 0.02, d.width - 0.1, 0.5, 0.12);
+  trim.setColor('#9aa0a6');
+  for (const sx of [-1, 1]) trim.orientedBox(sx * (W - 0.2), 1.2, 0.2, 0.4, 0.6, 1.2); // tanks
+  for (const sx of [-1, 1]) {
+    lightBox(head, sx * (W - 0.35), 1.15, L + 0.03, 0.4, 0.18, 0.06);
+    lightBox(tail, sx * (W - 0.2), 0.95, -L + 0.02, 0.2, 0.3, 0.06);
+    const ind = sx > 0 ? indL : indR;
+    lightBox(ind, sx * (W - 0.08), 1.15, L + 0.03, 0.12, 0.14, 0.06);
+    lightBox(ind, sx * (W - 0.2), 1.3, -L + 0.02, 0.2, 0.12, 0.06);
+    trim.setColor('#1a1a1a');
+    trim.orientedBox(sx * (W + 0.22), 2.7, L - 0.3, 0.06, 0.5, 0.12);
+  }
+  // roof marker lights
+  for (let i = -2; i <= 2; i++) head.orientedBox(i * 0.35, 3.8, L - 0.45, 0.14, 0.06, 0.06);
+  const parts = assemble(d, paint, trim, glass, head, tail, indL, indR, 0.34);
+  // dual rear axle look: add a second rear axle to the baked wheels
+  return parts;
+}
+
+function buildTrailer(): CarParts {
+  const d = withAxles({ length: 13.6, width: 2.5, height: 4.0, wheelBase: 8.6, wheelRadius: 0.5 }, 0.0);
+  // wheels: rear tandem axles near the back; "front axle" hidden under the kingpin
+  d.frontAxle = -3.2;
+  d.rearAxle = -5.4;
+  const { paint, trim, glass, head, tail, indL, indR } = builders();
+  const L = d.length / 2;
+  const W = d.width / 2;
+  paint.orientedBox(0, 2.55, 0, d.width, 2.8, d.length);
+  trim.setColor('#2b2e33');
+  trim.orientedBox(0, 1.05, 0, d.width - 0.3, 0.2, d.length - 0.2);
+  trim.orientedBox(0, 0.75, -L + 0.2, d.width - 0.2, 0.25, 0.12); // underrun bar
+  for (const sx of [-1, 1]) trim.orientedBox(sx * (W - 0.1), 0.72, 1.5, 0.05, 0.3, 5.5); // side guards
+  // reflective contour
+  trim.setColor('#f6c343');
+  for (const sx of [-1, 1]) trim.orientedBox(sx * (W + 0.005), 1.2, 0, 0.012, 0.06, d.length - 0.3);
+  trim.setColor('#c62828');
+  trim.orientedBox(0, 1.2, -L - 0.005, d.width - 0.2, 0.06, 0.012);
+  // rear doors seam
+  trim.setColor('#9aa0a6');
+  trim.orientedBox(0, 2.55, -L - 0.01, 0.04, 2.6, 0.02);
+  for (const sx of [-1, 1]) {
+    lightBox(tail, sx * (W - 0.3), 0.95, -L - 0.02, 0.4, 0.16, 0.06);
+    const ind = sx > 0 ? indL : indR;
+    lightBox(ind, sx * (W - 0.6), 0.95, -L - 0.02, 0.18, 0.16, 0.06);
+    lightBox(ind, sx * (W + 0.01), 1.05, 0, 0.02, 0.1, 0.16);
+  }
+  void glass;
+  void head;
+  return assemble(d, paint, trim, glass, head, tail, indL, indR, 0.3);
+}
+
+/** Motorcycle with rider (courier style). */
+function buildMoto(): CarParts {
+  const d: CarDims = { length: 2.1, width: 0.8, height: 1.5, wheelBase: 1.4, wheelRadius: 0.31, track: 0, frontAxle: 0.7, rearAxle: -0.7 };
+  const { paint, trim, glass, head, tail, indL, indR } = builders();
+  paint.orientedBox(0, 0.72, 0.05, 0.34, 0.34, 1.0); // tank / body
+  paint.orientedBox(0, 0.8, 0.62, 0.42, 0.42, 0.24); // front fairing
+  trim.setColor('#1b1b1b');
+  trim.orientedBox(0, 0.86, -0.4, 0.3, 0.12, 0.7); // seat
+  trim.orientedBox(0, 0.55, 0, 0.18, 0.2, 1.3); // frame
+  trim.orientedBox(0, 1.05, 0.55, 0.62, 0.04, 0.04); // handlebar
+  // courier box
+  trim.setColor('#e53935');
+  trim.orientedBox(0, 1.1, -0.82, 0.46, 0.4, 0.42);
+  // rider
+  trim.setColor('#263238');
+  trim.orientedBox(0, 1.22, -0.2, 0.42, 0.6, 0.28);
+  for (const sx of [-1, 1]) trim.orientedBox(sx * 0.18, 0.78, 0.05, 0.12, 0.14, 0.55);
+  for (const sx of [-1, 1]) trim.orientedBox(sx * 0.22, 1.25, 0.18, 0.09, 0.09, 0.5);
+  const helmet = new THREE.SphereGeometry(0.16, 10, 8);
+  trim.setColor('#f5f5f5');
+  trim.geometry(helmet, new THREE.Matrix4().makeTranslation(0, 1.66, -0.12));
+  glass.orientedBox(0, 1.64, 0.02, 0.22, 0.1, 0.04);
+  lightBox(head, 0, 0.92, 0.75, 0.16, 0.12, 0.06);
+  lightBox(tail, 0, 0.8, -1.05, 0.14, 0.06, 0.04);
+  lightBox(indL, 0.2, 0.92, 0.72, 0.06, 0.05, 0.05);
+  lightBox(indR, -0.2, 0.92, 0.72, 0.06, 0.05, 0.05);
+  lightBox(indL, 0.16, 0.78, -1.02, 0.06, 0.05, 0.05);
+  lightBox(indR, -0.16, 0.78, -1.02, 0.06, 0.05, 0.05);
+  const wheels: WheelSpec[] = [
+    { x: 0, y: d.wheelRadius, z: d.frontAxle, r: d.wheelRadius, w: 0.12, front: true },
+    { x: 0, y: d.wheelRadius, z: d.rearAxle, r: d.wheelRadius, w: 0.14, front: false },
+  ];
+  const baked = new MeshBuilder();
+  const tire = new THREE.CylinderGeometry(d.wheelRadius, d.wheelRadius, 0.13, 12);
+  tire.rotateZ(Math.PI / 2);
+  baked.setColor('#161616');
+  for (const w of wheels) baked.geometry(tire, new THREE.Matrix4().makeTranslation(w.x, w.y, w.z));
+  const single = new MeshBuilder();
+  single.setColor('#161616');
+  single.geometry(tire, new THREE.Matrix4());
+  return {
+    paint: paint.build(),
+    trim: trim.build(),
+    glass: glass.build(),
+    head: head.build(),
+    tail: tail.build(),
+    indL: indL.build(),
+    indR: indR.build(),
+    wheelsBaked: baked.build(),
+    wheel: single.build(),
+    wheels,
+    dims: d,
+  };
+}
+
 const cache = new Map<CarType, CarParts>();
 
 export function carParts(type: CarType): CarParts {
   let p = cache.get(type);
   if (!p) {
-    p =
-      type === 'van'
-        ? buildVan()
-        : type === 'bus'
-          ? buildBus()
-          : type === 'truck'
-            ? buildTruck()
-            : buildStandard(type);
+    switch (type) {
+      case 'van':
+        p = buildVan();
+        break;
+      case 'bus':
+        p = buildBus();
+        break;
+      case 'truck':
+        p = buildTruck();
+        break;
+      case 'minibus':
+      case 'ambulance':
+        p = buildBoxVan(type);
+        break;
+      case 'pickup':
+        p = buildPickup();
+        break;
+      case 'tir':
+        p = buildTractor();
+        break;
+      case 'trailer':
+        p = buildTrailer();
+        break;
+      case 'moto':
+        p = buildMoto();
+        break;
+      default:
+        p = buildStandard(type);
+    }
     cache.set(type, p);
   }
   return p;
@@ -613,15 +978,35 @@ export function carMaterials(): CarMaterials {
   return sharedMats;
 }
 
-export function randomCarType(rng: () => number, allowHeavy: boolean): CarType {
-  const r = rng();
-  if (allowHeavy && r < 0.05) return 'bus';
-  if (allowHeavy && r < 0.09) return 'truck';
-  if (r < 0.3) return 'hatch';
-  if (r < 0.58) return 'sedan';
-  if (r < 0.74) return 'suv';
-  if (r < 0.86) return 'van';
-  return 'taxi';
+export type TrafficContext = 'parked' | 'street' | 'arterial' | 'highway' | 'industrial';
+
+/** Weighted vehicle mix for a road context (more lorries on the ring road, taxis/dolmuş downtown). */
+export function randomCarType(rng: () => number, ctx: TrafficContext | boolean): CarType {
+  const c: TrafficContext = typeof ctx === 'boolean' ? (ctx ? 'arterial' : 'parked') : ctx;
+  const table: [CarType, number][] =
+    c === 'parked'
+      ? [['hatch', 30], ['sedan', 28], ['suv', 14], ['wagon', 8], ['van', 9], ['pickup', 5], ['taxi', 5], ['minibus', 1]]
+      : c === 'highway'
+        ? [['hatch', 16], ['sedan', 22], ['suv', 14], ['wagon', 8], ['van', 8], ['pickup', 6], ['truck', 7], ['tir', 12], ['bus', 3], ['minibus', 2], ['police', 1], ['moto', 1]]
+        : c === 'industrial'
+          ? [['hatch', 14], ['sedan', 14], ['van', 14], ['pickup', 14], ['truck', 18], ['tir', 10], ['suv', 8], ['moto', 4], ['minibus', 4]]
+          : c === 'arterial'
+            ? [['hatch', 22], ['sedan', 22], ['suv', 12], ['wagon', 6], ['van', 8], ['taxi', 10], ['minibus', 6], ['bus', 4], ['truck', 3], ['pickup', 3], ['police', 1.2], ['moto', 5]]
+            : [['hatch', 28], ['sedan', 24], ['suv', 12], ['wagon', 6], ['van', 8], ['taxi', 9], ['pickup', 3], ['police', 0.8], ['moto', 7], ['minibus', 2]];
+  const total = table.reduce((a, [, w]) => a + w, 0);
+  let r = rng() * total;
+  for (const [t, w] of table) {
+    r -= w;
+    if (r <= 0) return t;
+  }
+  return 'sedan';
+}
+
+/** Footprint used for traffic spacing / collisions (a lorry rig counts as one long vehicle). */
+export function vehicleFootprint(type: CarType): { length: number; width: number } {
+  if (type === 'tir') return { length: TIR_RIG.length, width: TIR_RIG.width };
+  const d = carParts(type).dims;
+  return { length: d.length, width: d.width };
 }
 
 /** Greenhouse profile of a passenger car (z, y points: windshield base, roof front, roof rear, rear base). */

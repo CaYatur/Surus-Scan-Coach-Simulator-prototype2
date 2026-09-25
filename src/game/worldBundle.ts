@@ -7,7 +7,7 @@ import { AITraffic } from '../traffic/aiTraffic';
 import { Pedestrians } from '../traffic/pedestrians';
 import { Navigator } from '../missions/navigator';
 import { MapRenderer } from '../ui/mapRenderer';
-import type { QualityProfile } from '../core/settings';
+import { settings, type QualityProfile } from '../core/settings';
 import type { MarkerOpts } from '../missions/mission';
 import { LAYER_DETAIL } from '../vehicle/cockpit';
 
@@ -50,6 +50,8 @@ export class WorldBundle {
   setDensity(q: QualityProfile, traffic: number, peds: number) {
     this.traffic.target = Math.round(q.trafficCount * traffic * this.map.trafficScale);
     this.traffic.radius = Math.min(210, q.drawDistance * 0.35 + 70);
+    this.traffic.wideRadius = Math.min(460, q.drawDistance * 0.7 + 90);
+    this.traffic.emergencyEvery = this.map.id === 'city' && settings.get().emergencyVehicles ? 160 : 0;
     this.peds.target = Math.round(q.pedestrianCount * peds);
   }
 

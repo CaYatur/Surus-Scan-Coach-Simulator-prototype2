@@ -111,6 +111,9 @@ export function renderReport(host: HTMLElement, d: ReportData, map: MapRenderer,
       ${statTile('Min. TTC', isFinite(st.minTTC) ? `${st.minTTC.toFixed(1)} sn` : '—', `${st.nearMiss} ramak kala`)}
       ${statTile('Takip mesafesi', isFinite(st.minHeadway) ? `min ${st.minHeadway.toFixed(1)} sn` : '—')}
       ${statTile('Işık / DUR', `${st.redLights} kırmızı`, `${st.stopSigns.full}/${st.stopSigns.total} tam duruş`)}
+      ${st.highwayTime > 5 ? statTile('Bölünmüş yol', `${(st.highwayDistance / 1000).toFixed(1)} km`, `${st.rightOvertakes} sağdan sollama · ${st.leftLaneHog} sol şerit`) : ''}
+      ${st.roundabouts.total ? statTile('Göbekli kavşak', `${st.roundabouts.exitSignal}/${st.roundabouts.total}`, 'çıkışta sinyal') : ''}
+      ${statTile('Şerit değişimi', `${st.laneChanges.signaled}/${st.laneChanges.total}`, `sinyalli · ${st.solidLine} düz çizgi`)}
     </div>
     <div class="grid2">
       <div class="card"><h3>🧭 Koç önerileri</h3><ol class="tips">${r.tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ol></div>
@@ -180,6 +183,22 @@ export function renderReport(host: HTMLElement, d: ReportData, map: MapRenderer,
       el('div', {
         class: 'card',
         html: `<h3 style="color:${COMPONENT_META[c].color}">${COMPONENT_META[c].title} — ${r.components[c]}</h3>${barRows(subs.map((s) => ({ label: s.name, value: s.score, sub: `${s.value} · ${s.detail}` })))}`,
+      })
+    );
+  }
+  const zoneRows = Object.entries(st.zones)
+    .filter(([, z]) => z.time > 3)
+    .sort((a, b) => b[1].time - a[1].time)
+    .map(([k, z]) => {
+      const pctIn = Math.round((1 - z.over / Math.max(0.1, z.time)) * 100);
+      return `<tr><td>${esc(k)}</td><td>${z.limit} km/h</td><td>${formatTime(z.time)}</td><td style="color:${pctIn >= 95 ? '#4cd07d' : pctIn >= 80 ? '#ffa726' : '#f0544f'}">%${pctIn}</td><td>${z.maxOver > 0 ? `+${Math.round(z.maxOver)}` : '—'}</td></tr>`;
+    })
+    .join('');
+  if (zoneRows) {
+    detail.append(
+      el('div', {
+        class: 'card',
+        html: `<h3>🚸 Hız bölgeleri</h3><table class="ztable"><thead><tr><th>Bölge / yol</th><th>Sınır</th><th>Süre</th><th>Sınır içinde</th><th>En fazla aşım</th></tr></thead><tbody>${zoneRows}</tbody></table><p class="muted small">Tolerans: okul/hastane/çarşı 3 km/h, diğer yollarda sınırın %10'u (en az 6 km/h).</p>`,
       })
     );
   }

@@ -63,7 +63,7 @@ export class Pedestrians {
       hair: new THREE.SphereGeometry(0.128, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2),
     };
     this.buildGraph();
-    const zone = net.map.zones[0];
+    const zone = net.map.zones.find((z) => z.kind === 'school');
     if (zone) this.schoolZone = zone.rect;
   }
 
@@ -84,24 +84,38 @@ export class Pedestrians {
     const corner = (n: RoadNode, sx: number, sz: number) => {
       const k = `${n.id}:${sx}:${sz}`;
       let c = corners.get(k);
-      if (!c) corners.set(k, (c = mk(n.x + sx * (n.hx + W), n.z + sz * (n.hz + W))));
+      // roundabout corners are paved islands inside the node box
+      const inset = n.kind === 'roundabout' ? -2 : W;
+      if (!c) corners.set(k, (c = mk(n.x + sx * (n.hx + inset), n.z + sz * (n.hz + inset))));
       return c;
     };
     const link = (a: PNode, b: PNode, crossing: PLink['crossing'] = null) => {
       a.links.push({ to: b, crossing });
       b.links.push({ to: a, crossing });
     };
+    // At roundabouts the edge sidewalks end at "gates" that lead onto the paved corner islands.
+    const endPt = (n: RoadNode, sx: number, sz: number, e: RoadEdge) => {
+      if (n.kind !== 'roundabout') return corner(n, sx, sz);
+      const g =
+        e.axis === 'ns'
+          ? mk(n.x + sx * (e.halfWidth + W), n.z + sz * (n.hz + 0.6))
+          : mk(n.x + sx * (n.hx + 0.6), n.z + sz * (e.halfWidth + W));
+      link(g, corner(n, sx, sz));
+      return g;
+    };
     for (const e of this.net.edges) {
+      // no footpaths along / at the ring road and its bends
+      if (e.cls === 'highway' || e.a.highway || e.b.highway || e.a.kind === 'bend' || e.b.kind === 'bend') continue;
       // two sidewalks, split by mid-block zebras
       const sides: [PNode, PNode][] =
         e.axis === 'ns'
           ? [
-              [corner(e.a, 1, 1), corner(e.b, 1, -1)],
-              [corner(e.a, -1, 1), corner(e.b, -1, -1)],
+              [endPt(e.a, 1, 1, e), endPt(e.b, 1, -1, e)],
+              [endPt(e.a, -1, 1, e), endPt(e.b, -1, -1, e)],
             ]
           : [
-              [corner(e.a, 1, -1), corner(e.b, -1, -1)],
-              [corner(e.a, 1, 1), corner(e.b, -1, 1)],
+              [endPt(e.a, 1, -1, e), endPt(e.b, -1, -1, e)],
+              [endPt(e.a, 1, 1, e), endPt(e.b, -1, 1, e)],
             ];
       if (!e.zebras.length) {
         for (const [a, b] of sides) link(a, b);
@@ -124,6 +138,7 @@ export class Pedestrians {
       for (let i = 0; i < zs.length; i++) link(chains[0][i + 1], chains[1][i + 1], { node: null, arm: null, edge: e });
     }
     for (const n of this.net.nodes) {
+      if (n.highway || n.kind === 'bend') continue;
       const NE = corner(n, 1, -1);
       const NW = corner(n, -1, -1);
       const SE = corner(n, 1, 1);

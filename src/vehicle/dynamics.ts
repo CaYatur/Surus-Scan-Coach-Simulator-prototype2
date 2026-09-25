@@ -5,7 +5,12 @@ export type DriveControls = {
   brake: number; // 0..1 (S / left trigger / brake pedal)
   steer: number; // −1..1, positive = left
   handbrake: number; // 0..1
+  clutch: number; // 0..1 (1 = pedal fully pressed / disengaged)
 };
+
+export type TransmissionKind = 'auto' | 'selector' | 'manual';
+
+export type DriveOptions = { mode: TransmissionKind; clutchAssist: boolean; abs: boolean; speedSensitive: boolean };
 
 export type GearMode = 'P' | 'R' | 'N' | 'D';
 
@@ -107,6 +112,16 @@ export class VehicleDynamics {
   /** Effective drive / brake after gear logic (for telemetry). */
   driveCmd = 0;
   brakeCmd = 0;
+  /** Manual gearbox state. */
+  engineOn = true;
+  stalls = 0;
+  private stallT = 0;
+  private crankT = 0;
+  private lastClutch = 0;
+  /** Clutch engagement 0..1 actually transmitting torque (for HUD / telemetry). */
+  clutchEngage = 1;
+  wheelLock = false;
+  mode: TransmissionKind = 'auto';
 
   constructor(p: VehicleParams) {
     this.p = p;
@@ -128,6 +143,14 @@ export class VehicleDynamics {
     this.holdStill = 0;
     this.bodyRoll = 0;
     this.bodyPitch = 0;
+    this.engineOn = true;
+    this.stallT = 0;
+    this.crankT = 0;
+    this.wheelLock = false;
+    if (this.mode === 'manual') {
+      this.gearMode = 'N';
+      this.gear = 1;
+    }
   }
 
   private torque(rpm: number): number {
@@ -160,6 +183,30 @@ export class VehicleDynamics {
     }
   }
 
+  /**
+   * Manual gearbox: select gear n (1..6), 0 = neutral, −1 = reverse, or step up/down.
+   * Without clutch assist the clutch must be pressed, otherwise the gears grind.
+   */
+  shiftManual(target: number | 'up' | 'down', clutchAssist: boolean): 'ok' | 'grind' | 'blocked' {
+    const cur = this.gearMode === 'R' ? -1 : this.gearMode === 'N' || this.gearMode === 'P' ? 0 : this.gear;
+    let next: number;
+    if (target === 'up') next = cur < 0 ? 0 : Math.min(this.p.gears.length, cur + 1);
+    else if (target === 'down') next = cur <= 0 ? (Math.abs(this.speed) < 1.5 ? -1 : 0) : cur - 1;
+    else next = clamp(target, -1, this.p.gears.length);
+    if (next === cur) return 'ok';
+    if (!clutchAssist && this.lastClutch < 0.6 && next !== 0 && this.engineOn) return 'grind';
+    if (next === -1 && this.speed > 1.5) return 'blocked';
+    if (cur === -1 && next > 0 && this.speed < -1.5) return 'blocked';
+    if (next === -1) this.gearMode = 'R';
+    else if (next === 0) this.gearMode = 'N';
+    else {
+      this.gearMode = 'D';
+      this.gear = next;
+    }
+    this.shiftTimer = clutchAssist ? 0.3 : 0;
+    return 'ok';
+  }
+
   /** Manually request a gear mode (selector transmission). */
   select(mode: GearMode) {
     if (mode === this.gearMode) return;
@@ -169,15 +216,22 @@ export class VehicleDynamics {
     this.gear = 1;
   }
 
-  update(dt: number, c: DriveControls, opts: { autoReverse: boolean; speedSensitive: boolean }) {
+  update(dt: number, c: DriveControls, opts: DriveOptions) {
     const p = this.p;
     const absV = Math.abs(this.speed);
     const mu = 0.95 * this.grip;
+    if (opts.mode !== this.mode) {
+      this.mode = opts.mode;
+      if (opts.mode === 'manual' && this.gearMode === 'P') this.gearMode = 'N';
+      this.engineOn = true;
+    }
+    this.lastClutch = c.clutch;
+    if (opts.mode === 'manual') return this.updateManual(dt, c, opts);
 
     // ——— Gear logic ———
     let drive = 0;
     let brake = 0;
-    if (opts.autoReverse) {
+    if (opts.mode === 'auto') {
       if (this.gearMode === 'P' || this.gearMode === 'N') this.gearMode = 'D';
       if (this.gearMode === 'D') {
         drive = c.throttle;
@@ -244,9 +298,99 @@ export class VehicleDynamics {
       if (drive < 0.02 && absV > 1) force -= Math.sign(this.speed) * p.mass * (0.35 + 0.02 * absV) * (this.gearMode === 'D' ? 1 : 0.5);
     }
 
+    this.integrate(dt, c, opts, force, brake, mu);
+  }
+
+  /**
+   * Manual gearbox with clutch. With clutch assist the clutch is automated (launch slip, shifts,
+   * never stalls); without it the driver controls the clutch pedal and the engine can stall.
+   */
+  private updateManual(dt: number, c: DriveControls, opts: DriveOptions) {
+    const p = this.p;
+    const absV = Math.abs(this.speed);
+    const mu = 0.95 * this.grip;
+    const assist = opts.clutchAssist;
+    this.handbrakeOn = c.handbrake > 0.5;
+    this.shiftTimer = Math.max(0, this.shiftTimer - dt);
+    const ratio = this.gearMode === 'D' ? p.gears[this.gear - 1] : this.gearMode === 'R' ? p.reverseRatio : 0;
+    const dir = this.gearMode === 'R' ? -1 : 1;
+    const wheelRpm = (absV / p.wheelRadius) * (60 / (2 * Math.PI));
+    const coupled = wheelRpm * ratio * p.finalDrive;
+    // moving against the selected gear direction (e.g. rolling back in 1st) couples negatively
+    const against = ratio > 0 && Math.sign(this.speed) === -dir && absV > 0.3;
+    // Engine restart after a stall: press the clutch (or select neutral) and touch the throttle
+    if (!this.engineOn) {
+      if ((c.clutch > 0.7 || ratio === 0) && c.throttle > 0.2) {
+        this.crankT += dt;
+        if (this.crankT > 0.7) {
+          this.engineOn = true;
+          this.crankT = 0;
+          this.rpm = p.idleRpm;
+        }
+      } else this.crankT = 0;
+    }
+    // Clutch engagement (1 = fully engaged)
+    let k: number;
+    if (ratio === 0) k = 0;
+    else if (assist) {
+      k = this.shiftTimer > 0 ? clamp(1 - this.shiftTimer / 0.3, 0, 1) * 0.8 : 1;
+      if (c.brake > 0.3 && absV < 2.5 && c.throttle < 0.05) k = 0; // clutch in when stopping
+    } else k = clamp((1 - c.clutch) * 1.35, 0, 1); // bites before the pedal is fully up
+    this.clutchEngage = k;
+    let drive = this.engineOn ? c.throttle : 0;
+    // idle governor keeps the engine alive (adds a little throttle when rpm drops)
+    if (this.engineOn) drive = Math.max(drive, clamp((p.idleRpm - this.rpm) / 450, 0, 0.35));
+    const free = p.idleRpm + c.throttle * (p.redline * 0.92 - p.idleRpm);
+    let target: number;
+    if (!this.engineOn) target = 0;
+    else if (k < 0.05) target = free;
+    else if (assist) {
+      // automated launch slip like a dual-clutch box
+      const slip = absV < 5 ? (p.idleRpm + c.throttle * 1800) * (1 - absV / 7) : 0;
+      target = Math.max(against ? 0 : coupled, slip, p.idleRpm);
+    } else target = free * (1 - k) + (against ? 0 : coupled) * k;
+    this.rpm = damp(this.rpm, clamp(target, 0, p.redline + 150), k > 0.9 ? 16 : 8, dt);
+    // Stall: engine dragged below ~60 % of idle with the clutch engaged
+    if (this.engineOn && !assist && k > 0.75 && ratio > 0 && (coupled < p.idleRpm * 0.6 || against)) {
+      this.stallT += dt;
+      if (this.stallT > (c.throttle > 0.3 ? 0.45 : 0.22)) {
+        this.engineOn = false;
+        this.stalls++;
+        this.stallT = 0;
+        this.rpm = 0;
+      }
+    } else this.stallT = Math.max(0, this.stallT - dt);
+    if (!this.engineOn) this.rpm = damp(this.rpm, 0, 10, dt);
+
+    let force = 0;
+    if (ratio > 0 && this.engineOn && k > 0) {
+      const tq = this.torque(Math.max(this.rpm, p.idleRpm)) * drive;
+      force = (tq * ratio * p.finalDrive * 0.88 * 0.62 * k) / p.wheelRadius;
+      if (coupled > p.redline + 60) force = 0; // rev limiter
+      const tract = mu * p.mass * G * 0.62;
+      if (force > tract) {
+        this.slip = Math.max(this.slip, clamp((force - tract) / tract, 0, 1));
+        force = tract;
+      }
+      force *= dir;
+      // engine braking when off the throttle in gear
+      if (c.throttle < 0.02 && absV > 1 && k > 0.5) force -= Math.sign(this.speed) * p.mass * (0.3 + 0.025 * absV) * (ratio / p.gears[2]) * 0.6;
+    }
+    this.driveCmd = c.throttle;
+    this.brakeCmd = c.brake;
+    this.integrate(dt, c, opts, force, c.brake, mu);
+  }
+
+  /** Brakes, resistance, steering/yaw and body motion (shared by all transmissions). */
+  private integrate(dt: number, c: DriveControls, opts: DriveOptions, force: number, brake: number, mu: number) {
+    const p = this.p;
+    const absV = Math.abs(this.speed);
     // ——— Brakes (ABS caps at the friction limit) ———
-    let brakeDecel = brake * p.maxBrakeDecel;
-    brakeDecel = Math.min(brakeDecel, mu * G);
+    const demand = brake * p.maxBrakeDecel;
+    let brakeDecel = Math.min(demand, mu * G);
+    // Without ABS a panic stop locks the wheels: less deceleration and almost no steering
+    this.wheelLock = !opts.abs && demand > mu * G * 0.97 && absV > 2;
+    if (this.wheelLock) brakeDecel = mu * G * 0.78;
     if (this.handbrakeOn) brakeDecel = Math.max(brakeDecel, mu * G * 0.45);
     const resist = p.dragCoef * this.speed * this.speed + p.rollRes * p.mass * G;
     const decel = brakeDecel + resist / p.mass;
@@ -275,11 +419,12 @@ export class VehicleDynamics {
     }
     // handbrake turn: rear steps out a little
     if (this.handbrakeOn && absV > 5) yawTarget *= 1.25;
+    if (this.wheelLock) yawTarget *= 0.15;
     this.yawRate = damp(this.yawRate, yawTarget, 12, dt);
     this.heading += this.yawRate * dt;
     this.latAccel = this.speed * this.yawRate;
 
-    const lockSlip = brake > 0.9 && absV > 8 ? 0.25 : 0;
+    const lockSlip = this.wheelLock ? 0.9 : brake > 0.9 && absV > 8 ? 0.25 : 0;
     this.slip = damp(this.slip, Math.max(cornerSlip, lockSlip, this.handbrakeOn && absV > 4 ? 0.7 : 0), 6, dt);
 
     this.x += Math.sin(this.heading) * this.speed * dt;

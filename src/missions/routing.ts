@@ -74,8 +74,9 @@ export function findRoute(net: RoadNetwork, startLane: Lane, startS: number, des
       const to = dir === 1 ? e.b : e.a;
       let turnCost = 0;
       if (cur.st.arm && inLanes.length) {
-        const t = turnBetween(inLanes[0].edge, inLanes[0].dir, e, dir);
+        const t = n.kind === 'bend' ? 'S' : turnBetween(inLanes[0].edge, inLanes[0].dir, e, dir);
         turnCost = t === 'L' ? 9 : t === 'R' ? 4 : 0;
+        if (n.kind === 'roundabout') turnCost = 5;
         if (n.signalized) turnCost += 6;
         else if (n.control[cur.st.arm] === 'stop') turnCost += 5;
       }
@@ -108,7 +109,10 @@ export function findRoute(net: RoadNetwork, startLane: Lane, startS: number, des
     k = c.prev;
   }
   steps.unshift({ edge: startLane.edge, dir: startLane.dir, from: startLane.startNode, to: startLane.endNode, turnAtEnd: 'end' });
-  for (let i = 0; i < steps.length - 1; i++) steps[i].turnAtEnd = turnBetween(steps[i].edge, steps[i].dir, steps[i + 1].edge, steps[i + 1].dir);
+  for (let i = 0; i < steps.length - 1; i++) {
+    // a highway bend is just the road curving — no manoeuvre
+    steps[i].turnAtEnd = steps[i].to.kind === 'bend' ? 'S' : turnBetween(steps[i].edge, steps[i].dir, steps[i + 1].edge, steps[i + 1].dir);
+  }
   return build(steps, startLane, startS, goal.lane, goal.s, destName);
 }
 
@@ -148,4 +152,19 @@ function build(steps: RouteStep[], startLane: Lane, startS: number, goalLane: La
   let length = 0;
   for (let i = 2; i < line.length; i += 2) length += Math.hypot(line[i] - line[i - 2], line[i + 1] - line[i - 1]);
   return { steps, dest: { x: p.x, z: p.z }, destName, line, length };
+}
+
+/** Exit number (1-based) when entering a roundabout from `inArm` and leaving via `outArm`. */
+export function roundaboutExit(n: RoadNode, inArm: Dir4, outArm: Dir4): number {
+  // counter-clockwise circulation (seen from above): E → N → W → S → E …
+  const order: Dir4[] = ['S', 'E', 'N', 'W'];
+  const start = order.indexOf(inArm);
+  let k = 0;
+  for (let i = 1; i <= 4; i++) {
+    const d = order[(start + i) % 4];
+    if (!n.arms[d]) continue;
+    k++;
+    if (d === outArm) return k;
+  }
+  return k;
 }

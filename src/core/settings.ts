@@ -3,7 +3,8 @@ import { Emitter } from './emitter';
 
 export type QualityLevel = 'low' | 'medium' | 'high' | 'ultra';
 export type ScanMode = 'keys' | 'webcam' | 'legacy';
-export type TransmissionMode = 'auto' | 'selector';
+export type TransmissionMode = 'auto' | 'selector' | 'manual';
+export type ControlPreset = 'easy' | 'advanced' | 'custom';
 export type HudMode = 'full' | 'minimal' | 'off';
 export type PlayerCarType = 'hatch' | 'sedan' | 'suv';
 
@@ -25,6 +26,13 @@ export type Settings = {
   webcamDrivesCamera: boolean;
   webcamPreview: boolean;
   // Controls
+  controlPreset: ControlPreset;
+  /** Custom key bindings (action → KeyboardEvent.code list); empty = defaults. */
+  keyBindings: Record<string, string[]>;
+  clutchAssist: boolean;
+  abs: boolean;
+  autoSignalCancel: boolean;
+  autoLights: boolean;
   keyboardSteerSpeed: number;
   speedSensitiveSteering: boolean;
   transmission: TransmissionMode;
@@ -48,6 +56,7 @@ export type Settings = {
   liveCoachHints: boolean;
   routeGuideLine: boolean;
   surpriseEvents: boolean;
+  emergencyVehicles: boolean;
   endOnHardCrash: boolean;
 };
 
@@ -64,6 +73,12 @@ export const DEFAULT_SETTINGS: Settings = {
   webcamYawThreshold: 20,
   webcamDrivesCamera: true,
   webcamPreview: true,
+  controlPreset: 'easy',
+  keyBindings: {},
+  clutchAssist: true,
+  abs: true,
+  autoSignalCancel: true,
+  autoLights: true,
   keyboardSteerSpeed: 1,
   speedSensitiveSteering: true,
   transmission: 'auto',
@@ -84,10 +99,20 @@ export const DEFAULT_SETTINGS: Settings = {
   liveCoachHints: true,
   routeGuideLine: true,
   surpriseEvents: true,
+  emergencyVehicles: true,
   endOnHardCrash: false,
 };
 
 const KEY = 'ssc-settings-v1';
+
+/** Control presets: "Kolay" hides the mechanics, "Gelişmiş" is close to a real driving-school car. */
+export const CONTROL_PRESETS: Record<Exclude<ControlPreset, 'custom'>, Partial<Settings>> = {
+  easy: { transmission: 'auto', clutchAssist: true, abs: true, autoSignalCancel: true, autoLights: true, speedSensitiveSteering: true },
+  advanced: { transmission: 'manual', clutchAssist: false, abs: true, autoSignalCancel: true, autoLights: false, speedSensitiveSteering: false },
+};
+
+/** Settings that belong to a control preset (changing one makes the preset "custom"). */
+export const PRESET_KEYS: (keyof Settings)[] = ['transmission', 'clutchAssist', 'abs', 'autoSignalCancel', 'autoLights', 'speedSensitiveSteering'];
 
 type SettingsEvents = { change: { settings: Settings; keys: (keyof Settings)[] } };
 
