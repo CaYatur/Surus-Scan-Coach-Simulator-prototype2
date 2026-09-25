@@ -1824,3 +1824,9 @@ input[type='range'] {
 
 .radio-cards.row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 @media (max-width: 720px) { .radio-cards.row3 { grid-template-columns: 1fr; } }
+
+.nav-lanes { display: flex; align-items: center; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+.nav-lanes .ln { width: 24px; height: 26px; border-radius: 5px; display: grid; place-items: center; font-weight: 800; font-size: 15px; background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.35); border: 1px solid rgba(255,255,255,0.12); }
+.nav-lanes .ln.ok { color: #fff; background: rgba(53,167,255,0.35); border-color: #35a7ff; }
+.nav-lanes .ln.cur { box-shadow: 0 0 0 2px #ffd54f inset; }
+.nav-lanes small { flex-basis: 100%; font-size: 11px; color: #ffd54f; }

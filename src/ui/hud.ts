@@ -173,7 +173,18 @@ export class Hud {
       return;
     }
     this.nav.classList.remove('hidden');
-    this.nav.innerHTML = `<div class="nav-arrow">${ARROW_SVG[n.arrow] ?? ARROW_SVG.S}</div><div class="nav-body"><div class="nav-dist">${n.dist > 0 ? formatDistance(n.dist) : ''}</div><div class="nav-text">${esc(n.text)}</div></div>`;
+    let laneHtml = '';
+    if (n.lanes) {
+      // drawn left → right as the driver sees them (highest index = leftmost lane)
+      const boxes: string[] = [];
+      for (let k = n.lanes.count - 1; k >= 0; k--) {
+        const cls = `${n.lanes.ok[k] ? 'ok' : ''} ${k === n.lanes.current ? 'cur' : ''}`;
+        const glyph = n.lanes.ok[k] ? (n.arrow === 'L' ? '↰' : n.arrow === 'R' ? '↱' : '↑') : '↑';
+        boxes.push(`<span class="ln ${cls}">${glyph}</span>`);
+      }
+      laneHtml = `<div class="nav-lanes">${boxes.join('')}<small>${esc(n.lanes.hint)}</small></div>`;
+    }
+    this.nav.innerHTML = `<div class="nav-arrow">${ARROW_SVG[n.arrow] ?? ARROW_SVG.S}</div><div class="nav-body"><div class="nav-dist">${n.dist > 0 ? formatDistance(n.dist) : ''}</div><div class="nav-text">${esc(n.text)}</div>${laneHtml}</div>`;
   }
 
   setMission(title: string, sub: string, objs: ObjectiveView[], hint: string, timer: string) {

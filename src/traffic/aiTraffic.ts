@@ -717,6 +717,18 @@ export class AITraffic {
 
       const lead = this.leader(c, player, peds);
       // Emergency vehicles pass slow obstacles on the left
+      if (c.siren && c.lane && lead.gap < 28 && Math.abs(c.latOff) < 0.05) {
+        // multi-lane: move to a free lane on the left (no need to wait for the usual cooldown)
+        const lanes = this.sameDirLanes(c.lane);
+        const L = lanes[c.lane.index + 1];
+        if (L && c.s < c.lane.solidFromS - 4 && this.safeToEnter(c, L, player)) {
+          c.latOff = (L.index - c.lane.index) * L.width;
+          c.lane = L;
+          c.path = L.path;
+          c.next = this.chooseNext(L);
+          c.lcSignal = 'left';
+        }
+      }
       if (c.siren) {
         if (lead.gap < 16 && lead.v < 5) c.passing = approach(c.passing, 1, 0.7 * dt);
         else if (lead.gap > 25 || lead.v > 8) c.passing = approach(c.passing, 0, 0.5 * dt);

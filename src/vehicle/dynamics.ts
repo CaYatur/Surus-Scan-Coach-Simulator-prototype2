@@ -351,7 +351,8 @@ export class VehicleDynamics {
     } else target = free * (1 - k) + (against ? 0 : coupled) * k;
     this.rpm = damp(this.rpm, clamp(target, 0, p.redline + 150), k > 0.9 ? 16 : 8, dt);
     // Stall: engine dragged below ~60 % of idle with the clutch engaged
-    if (this.engineOn && !assist && k > 0.75 && ratio > 0 && (coupled < p.idleRpm * 0.6 || against)) {
+    const lugging = coupled < p.idleRpm * 0.45 || (coupled < p.idleRpm * 0.62 && c.throttle < 0.2);
+    if (this.engineOn && !assist && k > 0.75 && ratio > 0 && (lugging || against)) {
       this.stallT += dt;
       if (this.stallT > (c.throttle > 0.3 ? 0.45 : 0.22)) {
         this.engineOn = false;
@@ -365,7 +366,9 @@ export class VehicleDynamics {
     let force = 0;
     if (ratio > 0 && this.engineOn && k > 0) {
       const tq = this.torque(Math.max(this.rpm, p.idleRpm)) * drive;
-      force = (tq * ratio * p.finalDrive * 0.88 * 0.62 * k) / p.wheelRadius;
+      // a slipping clutch already passes most of the engine torque once it bites
+      const kT = coupled < this.rpm - 150 ? Math.min(1, k * 2.2) : k;
+      force = (tq * ratio * p.finalDrive * 0.88 * 0.62 * kT) / p.wheelRadius;
       if (coupled > p.redline + 60) force = 0; // rev limiter
       const tract = mu * p.mass * G * 0.62;
       if (force > tract) {

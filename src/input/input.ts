@@ -136,7 +136,7 @@ export class Input {
     this.kbThrottle = approach(this.kbThrottle, up ? 1 : 0, (up ? (this.kbThrottle < 0.5 ? 1.4 : 0.8) : 6) * dt);
     this.kbBrake = approach(this.kbBrake, down ? 1 : 0, (down ? 5 : 8) * dt);
     // clutch: pressed quickly, released gradually (like lifting a pedal)
-    this.kbClutch = approach(this.kbClutch, held('clutch') ? 1 : 0, (held('clutch') ? 8 : 2.2) * dt);
+    this.kbClutch = approach(this.kbClutch, held('clutch') ? 1 : 0, (held('clutch') ? 8 : this.kbClutch > 0.55 ? 2.4 : 0.9) * dt);
 
     const drive: DriveControls = {
       throttle: this.kbThrottle,

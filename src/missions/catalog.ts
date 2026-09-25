@@ -378,7 +378,7 @@ export function emergencyEvent(title: string): Step {
       if (!c.data.spawned && (c.data.retry as number) <= 0) {
         const p = h.player();
         if (p.kmh > 15) {
-          const car = h.traffic.spawnEmergency(p, 100, 'ambulance');
+          const car = h.traffic.spawnEmergency(p, 70, 'ambulance');
           if (car) {
             c.data.spawned = 1;
             h.toast('🚑 Arkadan sirenli ambulans geliyor!', 'warn');
@@ -391,7 +391,7 @@ export function emergencyEvent(title: string): Step {
         res = h.monitor.count('emergency_yield_fail') ? 'Ambulansa yol verilmedi ✗' : 'Ambulansa yol verildi ✓';
         return 'done';
       }
-      if (c.data.spawned && c.t > 60) {
+      if (c.data.spawned && c.t > 95) {
         res = 'Ambulans değerlendirilemedi';
         return 'done';
       }

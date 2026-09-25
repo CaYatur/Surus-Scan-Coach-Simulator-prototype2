@@ -3,7 +3,14 @@ import { formatDistance } from '../core/math';
 import type { RoadNetwork, RoadQuery } from '../world/roadNetwork';
 import { findRoute, roundaboutExit, type Route } from './routing';
 
-export type NavInstruction = { arrow: 'L' | 'R' | 'S' | 'U' | ''; dist: number; text: string; street: string };
+export type NavInstruction = {
+  arrow: 'L' | 'R' | 'S' | 'U' | '';
+  dist: number;
+  text: string;
+  street: string;
+  /** Lane guidance for the next manoeuvre: lanes of the current carriageway (0 = right) and which ones are suitable. */
+  lanes?: { count: number; ok: boolean[]; current: number; hint: string } | null;
+};
 
 /** Turn-by-turn navigation with rerouting and optional voice prompts. */
 export class Navigator {
@@ -104,11 +111,31 @@ export class Navigator {
       const outArm = this.net.armOf(node, r.steps[i + 1].edge);
       if (inArm && outArm) verb = `Göbekli kavşakta ${roundaboutExit(node, inArm, outArm)}. çıkıştan çıkın`;
     }
+    // Lane guidance on multi-lane approaches to the next turn
+    let lanes: NavInstruction['lanes'] = null;
+    if (!last && (turn === 'L' || turn === 'R') && i === this.stepIndex && dist < 260 && q.edge === st.edge && q.laneIndex >= 0) {
+      const n = st.edge.spec.lanes;
+      if (n >= 2) {
+        const ok = Array.from({ length: n }, (_, k) => (turn === 'R' ? k === 0 : k === n - 1));
+        const good = ok[q.laneIndex];
+        lanes = {
+          count: n,
+          ok,
+          current: q.laneIndex,
+          hint: good ? 'Doğru şeritteysiniz' : turn === 'L' ? 'Sola dönüş için en sol şeride geçin' : 'Sağa dönüş için en sağ şeride geçin',
+        };
+        if (voice && !good && dist > 60 && !this.announced.has(`${i}:lane`)) {
+          this.announced.add(`${i}:lane`);
+          this.onAnnounce?.(lanes.hint);
+        }
+      }
+    }
     this.instruction = {
       arrow: last ? 'S' : turn === 'L' ? 'L' : turn === 'R' ? 'R' : 'S',
       dist: last ? dd : dist,
       text: last ? `${r.destName}` : `${verb} — ${street}`,
       street,
+      lanes,
     };
     this.remaining = dd;
     if (voice && !last) {

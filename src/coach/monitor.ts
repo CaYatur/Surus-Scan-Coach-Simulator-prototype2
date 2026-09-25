@@ -207,7 +207,7 @@ export class DrivingMonitor {
   private laneChangeTimes: number[] = [];
   /** When we entered the current edge (lane settling after a junction is not a lane change). */
   private edgeEnterT = -99;
-  private signalState: { side: 'none' | 'left' | 'right'; since: number; maneuverDone: boolean; doneT: number } = { side: 'none', since: 0, maneuverDone: false, doneT: 0 };
+  private signalState: { side: 'none' | 'left' | 'right'; since: number; maneuverDone: boolean; doneT: number; dist0: number; doneDist: number } = { side: 'none', since: 0, maneuverDone: false, doneT: 0, dist0: 0, doneDist: 0 };
   private lastRoadLane = { index: -1, lanes: 1, t: -99 };
   private approach: Approach | null = null;
   private junction: JunctionEntry | null = null;
@@ -233,7 +233,7 @@ export class DrivingMonitor {
   private blockT = 0;
   private lastRightSignalT = -99;
   private relPos = new Map<number, number>();
-  private emergencySeen = new Map<number, { t: number; ok: boolean; judged: boolean }>();
+  private emergencySeen = new Map<number, { t: number; ok: boolean; judged: boolean; closeT: number }>();
   private zoneKey: string | null = null;
 
   constructor(net: RoadNetwork, signals: SignalController | null) {
@@ -257,7 +257,7 @@ export class DrivingMonitor {
     this.junction = null;
     this.lastQ = null;
     this.speeding = { start: 0, max: 0, active: false, below: 0 };
-    this.signalState = { side: 'none', since: 0, maneuverDone: false, doneT: 0 };
+    this.signalState = { side: 'none', since: 0, maneuverDone: false, doneT: 0, dist0: 0, doneDist: 0 };
     this.reaction = null;
     this.yieldedPeds.clear();
     this.conflictPeds.clear();
@@ -361,14 +361,15 @@ export class DrivingMonitor {
   private trackSignal(f: MonitorFrame) {
     const s = this.signalState;
     if (f.signal !== s.side) {
-      this.signalState = { side: f.signal, since: f.t, maneuverDone: false, doneT: 0 };
+      this.signalState = { side: f.signal, since: f.t, maneuverDone: false, doneT: 0, dist0: this.stats.distance, doneDist: 0 };
       return;
     }
     if (s.side !== 'none') {
       this.stats.signalOnTime += f.dt;
-      if (s.maneuverDone && f.t - s.doneT > 7 && f.kmh > 15 && !this.junction) {
+      if (s.maneuverDone && !s.doneDist) s.doneDist = this.stats.distance;
+      if (s.maneuverDone && f.t - s.doneT > 7 && this.stats.distance - s.doneDist > 60 && f.kmh > 15 && !this.junction) {
         this.emit('signal_left_on', f.x, f.z, 'Sinyal açık kaldı — manevradan sonra kapatın', undefined, undefined, 'sigleft', 30);
-      } else if (!s.maneuverDone && f.t - s.since > 25 && f.kmh > 25) {
+      } else if (!s.maneuverDone && f.t - s.since > 25 && this.stats.distance - s.dist0 > 300 && f.kmh > 25) {
         this.emit('signal_left_on', f.x, f.z, 'Sinyal uzun süredir açık', undefined, undefined, 'sigleft', 30);
       }
     }
@@ -689,7 +690,7 @@ export class DrivingMonitor {
     const tol = sensitive ? 3 : Math.max(6, Math.round(lim * 0.1));
     const over = f.kmh - lim;
     // per-zone bookkeeping (road type when outside special zones)
-    const key = zone ? zone.label : f.q.edge ? `${f.q.edge.spec.label} (${lim})` : null;
+    const key = zone ? zone.label : f.q.edge ? `${f.q.edge.spec.label} (${lim})` : f.q.node?.kind === 'bend' ? `Çevre yolu virajı (${lim})` : f.q.node?.kind === 'roundabout' ? `Göbekli kavşak (${lim})` : null;
     if (key && f.kmh > 3) {
       const zs = st.zones[key] ?? (st.zones[key] = { time: 0, over: 0, maxOver: 0, limit: lim });
       zs.time += f.dt;
@@ -834,28 +835,35 @@ export class DrivingMonitor {
     const dx = f.x - em.x;
     const dz = f.z - em.z;
     const d = Math.hypot(dx, dz);
-    // only when the emergency vehicle is behind us and travelling the same way
+    // is the emergency vehicle behind us, travelling the same way?
     const behind = dx * Math.sin(em.heading) + dz * Math.cos(em.heading) > 0;
     const same = Math.abs(angleDiff(em.heading, f.heading)) < 0.6;
     let rec = this.emergencySeen.get(em.id);
     if (!rec) {
       if (d < 60 && behind && same) {
-        rec = { t: f.t, ok: false, judged: false };
+        rec = { t: f.t, ok: false, judged: false, closeT: 0 };
         this.emergencySeen.set(em.id, rec);
-        this.stats.emergency.total++;
       } else return;
     }
     if (rec.judged) return;
-    // yielding = moving to the right / slowing down so it can pass
+    // yielding = pulling over to the right or slowing right down so it can pass
     const lat = -dx * Math.cos(em.heading) + dz * Math.sin(em.heading);
-    if ((lat > 1.6 || f.kmh < 12) && d < 40) rec.ok = true;
-    const passed = !behind && d > 8;
-    if (passed || f.t - rec.t > 20) {
-      rec.judged = true;
-      if (rec.ok || passed) {
+    if ((lat > 1.4 || f.kmh < 12 || f.signal === 'right') && d < 45) rec.ok = true;
+    if (behind && same && d < 40) rec.closeT += f.dt;
+    const judge = (ok: boolean) => {
+      rec!.judged = true;
+      this.stats.emergency.total++;
+      if (ok) {
         this.stats.emergency.yielded++;
         this.emit('emergency_yield_ok', f.x, f.z, 'Geçiş üstünlüğü olan araca yol verdiniz');
       } else this.emit('emergency_yield_fail', f.x, f.z, 'Sirenli araca yol vermediniz — sağa yanaşıp yavaşlayın');
+    };
+    if (!behind && same && d < 30) judge(rec.ok || rec.closeT < 8); // it has passed us
+    else if (rec.closeT > 14 && !rec.ok) judge(false); // kept it stuck behind us
+    else if (!same && d > 25) {
+      // we turned off before it reached us — only judge if we had been blocking it
+      if (rec.closeT > 10) judge(rec.ok);
+      else rec.judged = true;
     }
   }
 

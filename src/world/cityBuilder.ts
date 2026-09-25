@@ -340,15 +340,17 @@ export class CityWorld {
   private buildGround() {
     const ext = this.map.extent;
     const size = Math.max(ext.maxX - ext.minX, ext.maxZ - ext.minZ) + 4200;
-    const geo = new THREE.PlaneGeometry(size, size, 1, 1);
+    // subdivided: one giant quad loses depth precision and can win the depth test against the road
+    const seg = Math.ceil(size / 120);
+    const geo = new THREE.PlaneGeometry(size, size, seg, seg);
     geo.rotateX(-Math.PI / 2);
     const uv = geo.getAttribute('uv') as THREE.BufferAttribute;
     for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * (size / 10), uv.getY(i) * (size / 10));
     const tex = grassTexture();
     tex.anisotropy = this.anisotropy;
-    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1, color: 0xd6dcc8 });
+    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1, color: 0xd6dcc8, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 });
     const m = new THREE.Mesh(geo, mat);
-    m.position.set((ext.minX + ext.maxX) / 2, -0.02, (ext.minZ + ext.maxZ) / 2);
+    m.position.set((ext.minX + ext.maxX) / 2, -0.04, (ext.minZ + ext.maxZ) / 2);
     m.receiveShadow = true;
     this.group.add(m);
   }

@@ -870,17 +870,18 @@ export class RoadNetwork {
       if (c.t === 'node') {
         const n = c.n;
         q.node = n;
+        // Base: the limit of the fastest arm (then capped by zones / the node's own advisory limit)
+        let lim = 0;
+        for (const d of DIRS) if (n.arms[d]) lim = Math.max(lim, n.arms[d]!.limit);
         if (n.kind === 'bend') {
           this.fillBendQuery(q, n, x, z, heading);
         } else if (n.kind === 'roundabout') {
           this.fillRoundaboutQuery(q, n, x, z, heading);
         } else {
+          // direction checks are skipped inside junctions
           q.kind = 'junction';
-          // Take the limit of the fastest arm; direction checks are skipped inside junctions.
-          let lim = 0;
-          for (const d of DIRS) if (n.arms[d]) lim = Math.max(lim, n.arms[d]!.limit);
-          q.limit = lim || 50;
         }
+        q.limit = lim || 50;
         const classes = DIRS.filter((d) => n.arms[d]).map((d) => n.arms[d]!.cls);
         const zn = this.zoneAt(x, z, classes);
         if (zn) {
