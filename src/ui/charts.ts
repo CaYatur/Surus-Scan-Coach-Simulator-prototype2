@@ -25,7 +25,7 @@ export function radarSvg(values: Record<Component, number>, compare?: Record<Com
   });
   const poly = COMPONENTS.map((k, i) => pt(i, values[k]).join(',')).join(' ');
   const cmp = compare ? `<polygon points="${COMPONENTS.map((k, i) => pt(i, compare[k]).join(',')).join(' ')}" class="rc"/>` : '';
-  return `<svg class="radar" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">${grid}${axes}${cmp}<polygon points="${poly}" class="rp"/></svg>`;
+  return `<svg class="radar" viewBox="-40 -6 ${size + 80} ${size + 12}" width="${size + 80}" height="${size + 12}">${grid}${axes}${cmp}<polygon points="${poly}" class="rp"/></svg>`;
 }
 
 /** Simple line chart; series share the x domain. */
@@ -43,16 +43,20 @@ export function lineChart(
   const yMin = opts.yMin ?? Math.min(0, ...all.map((p) => p.y));
   const yMax = opts.yMax ?? Math.max(...all.map((p) => p.y), yMin + 1) * 1.08;
   const X = (x: number) => pad.l + ((x - xMin) / (xMax - xMin)) * (W - pad.l - pad.r);
-  const Y = (y: number) => H - pad.b - ((y - yMin) / (yMax - yMin)) * (H - pad.t - pad.b);
+  const Y = (y: number) => H - pad.b - ((Math.max(yMin, Math.min(yMax, y)) - yMin) / (yMax - yMin)) * (H - pad.t - pad.b);
   let g = '';
   for (let i = 0; i <= 4; i++) {
     const v = yMin + ((yMax - yMin) * i) / 4;
     g += `<line x1="${pad.l}" x2="${W - pad.r}" y1="${Y(v)}" y2="${Y(v)}" class="cg"/><text x="${pad.l - 6}" y="${Y(v)}" class="ct" text-anchor="end" dominant-baseline="middle">${Math.round(v)}</text>`;
   }
   const fmt = opts.xFmt ?? ((x: number) => `${Math.round(x)}`);
+  let lastLabel = '';
   for (let i = 0; i <= 5; i++) {
     const v = xMin + ((xMax - xMin) * i) / 5;
-    g += `<text x="${X(v)}" y="${H - 8}" class="ct" text-anchor="middle">${fmt(v)}</text>`;
+    const label = fmt(v);
+    if (label === lastLabel) continue;
+    lastLabel = label;
+    g += `<text x="${X(v)}" y="${H - 8}" class="ct" text-anchor="middle">${label}</text>`;
   }
   for (const m of opts.markers ?? []) {
     g += `<line x1="${X(m.x)}" x2="${X(m.x)}" y1="${pad.t}" y2="${H - pad.b}" stroke="${m.color}" stroke-width="1.5" opacity="0.7"><title>${esc(m.label)}</title></line>`;

@@ -157,13 +157,13 @@ export class AITraffic {
   populate(player: PlayerInfo, initial = false) {
     let attempts = 0;
     const lanes = this.net.lanes;
-    while (this.cars.length < this.target && attempts < (initial ? 900 : 40)) {
+    while (this.cars.length < this.target && attempts < (initial ? 2500 : 60)) {
       attempts++;
       const lane = lanes[Math.floor(this.rng() * lanes.length)];
       const s = 6 + this.rng() * Math.max(1, lane.path.length - 12);
       lane.path.sample(s, this.tmp);
       const d = Math.hypot(this.tmp.x - player.x, this.tmp.z - player.z);
-      const minD = initial ? 28 : 140;
+      const minD = initial ? 25 : Math.min(130, this.radius * 0.72);
       if (d < minD || d > this.radius) continue;
       // never spawn in the player's own lane directly behind them
       this.spawnOn(lane, s);

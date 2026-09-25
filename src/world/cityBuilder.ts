@@ -1034,9 +1034,10 @@ export class CityWorld {
   /** 0 = dry, 1 = soaking wet. */
   setWet(w: number) {
     const m = this.materials.asphalt;
-    m.roughness = 0.92 - w * 0.62;
-    m.metalness = w * 0.15;
-    m.color.setScalar(1 - w * 0.35);
+    m.roughness = 0.92 - w * 0.7;
+    m.metalness = w * 0.1;
+    m.color.setScalar(1 - w * 0.45);
+    m.envMapIntensity = 1 + w * 5;
     this.materials.sidewalk.roughness = 0.85 - w * 0.4;
   }
 

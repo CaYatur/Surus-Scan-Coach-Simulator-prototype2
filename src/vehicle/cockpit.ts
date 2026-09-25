@@ -558,7 +558,7 @@ export class Cockpit {
     // add drops
     const rate = rain * (40 + kmh * 0.8) * dt;
     for (let i = 0; i < rate; i++) {
-      this.drops.push({ x: Math.random() * 256, y: Math.random() * 128, r: 0.8 + Math.random() * 2.2, age: 0 });
+      this.drops.push({ x: Math.random() * 256, y: Math.random() * 128, r: 1.2 + Math.random() * 2.6, age: 0 });
     }
     if (this.drops.length > 700) this.drops.splice(0, this.drops.length - 700);
     // wiper clears a band that follows the blade angle
@@ -574,11 +574,11 @@ export class Cockpit {
     for (const d of this.drops) {
       d.age += dt;
       if (kmh > 30) d.y -= kmh * 0.02 * dt * 60 * 0.1;
-      g.fillStyle = 'rgba(210,225,240,0.35)';
+      g.fillStyle = 'rgba(150,170,190,0.45)';
       g.beginPath();
       g.arc(d.x, d.y, d.r, 0, Math.PI * 2);
       g.fill();
-      g.fillStyle = 'rgba(255,255,255,0.4)';
+      g.fillStyle = 'rgba(255,255,255,0.65)';
       g.fillRect(d.x - d.r * 0.3, d.y - d.r * 0.4, d.r * 0.4, d.r * 0.4);
     }
     this.drops = this.drops.filter((d) => d.y > -5);

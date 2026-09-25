@@ -326,10 +326,10 @@ export class Screens {
     const trend = hist.length
       ? lineChart(
           [
-            { values: hist.map((h, i) => ({ x: i + 1, y: h.overall })), color: '#35a7ff', label: 'Karne notu', fill: true },
+            { values: [{ x: 0, y: 70 }, ...hist.map((h, i) => ({ x: i + 1, y: h.overall }))], color: '#35a7ff', label: 'Karne notu', fill: true },
             { values: hist.map((h, i) => ({ x: i + 1, y: h.session })), color: '#ffa726', label: 'Oturum puanı', dashed: true },
           ],
-          { yMin: 0, yMax: 100, h: 180, xFmt: (x) => `#${Math.round(x)}` }
+          { yMin: 0, yMax: 100, h: 180, xFmt: (x) => (Math.round(x) === 0 ? 'başlangıç' : `#${Math.round(x)}`) }
         )
       : '<p class="muted">Henüz oturum yok.</p>';
     const b = p.baseline;

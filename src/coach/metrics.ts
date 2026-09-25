@@ -199,7 +199,7 @@ export function computeSession(inp: ScoreInput): SessionResult {
     2
   );
   const hardRate = perKm(st.hardBrake * 1 + st.hardAccel * 0.5 + st.harshCorner * 0.8);
-  add('hard_events', 'guvenlik', 'Sert olay oranı', 100 - hardRate * 14, `${st.hardBrake} fren · ${st.hardAccel} gaz · ${st.harshCorner} viraj (${km.toFixed(2)} km)`, 'Olaylar mesafe (km) ile normalize edildi.', 1.2);
+  add('hard_events', 'guvenlik', 'Sert olay oranı', 100 - hardRate * 7, `${st.hardBrake} fren · ${st.hardAccel} gaz · ${st.harshCorner} viraj (${km.toFixed(2)} km)`, 'Olaylar mesafe (km) ile normalize edildi.', 1.2);
   if (st.reactionTimes.length) {
     const r = mean(st.reactionTimes);
     add('reaction', 'guvenlik', 'Tepki süresi', 100 - Math.max(0, r - 0.7) * 70, `${r.toFixed(2)} sn (ort. ${st.reactionTimes.length} ölçüm)`, 'Uyarı ile frene basma arasındaki süre. 1 sn altı iyi kabul edilir.', 1.5);
@@ -279,8 +279,10 @@ export function computeSession(inp: ScoreInput): SessionResult {
   if (st.wrongWayTime > 6) cap(60, 'Uzun süre ters yön — tavan 60');
 
   let risk: RiskLevel = 'Düşük';
-  const critical = events.filter((e) => e.severity === 'critical').length;
-  const major = events.filter((e) => e.severity === 'major').length;
+  // Risk is about safety and rules — comfort/smoothness events do not raise it
+  const riskEvents = events.filter((e) => e.component === 'guvenlik' || e.component === 'kural');
+  const critical = riskEvents.filter((e) => e.severity === 'critical').length;
+  const major = riskEvents.filter((e) => e.severity === 'major').length;
   if (critical > 0 || col.hard > 0) risk = 'Kritik';
   else if (major >= 3 || components.guvenlik < 55) risk = 'Yüksek';
   else if (major > 0 || components.kural < 70 || overall < 70) risk = 'Orta';

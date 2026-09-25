@@ -49,7 +49,7 @@ export class WorldBundle {
 
   setDensity(q: QualityProfile, traffic: number, peds: number) {
     this.traffic.target = Math.round(q.trafficCount * traffic * this.map.trafficScale);
-    this.traffic.radius = Math.min(320, q.drawDistance * 0.6 + 60);
+    this.traffic.radius = Math.min(210, q.drawDistance * 0.35 + 70);
     this.peds.target = Math.round(q.pedestrianCount * peds);
   }
 

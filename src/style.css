@@ -290,12 +290,14 @@ input[type='range'] {
   z-index: 20;
   background: radial-gradient(120% 90% at 20% 10%, rgba(13, 17, 23, 0.25), rgba(8, 11, 16, 0.78));
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   overflow: auto;
+  padding: 2vh 0;
   user-select: text;
 }
 .main {
+  margin: auto;
   width: min(1100px, 94vw);
   padding: 20px 0 40px;
 }
@@ -423,8 +425,9 @@ input[type='range'] {
   font-size: 28px;
 }
 .screen {
+  margin: auto;
   width: min(980px, 94vw);
-  max-height: 92vh;
+  max-height: 96vh;
   display: flex;
   flex-direction: column;
   background: rgba(12, 17, 24, 0.9);

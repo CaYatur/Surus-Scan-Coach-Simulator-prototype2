@@ -35,7 +35,7 @@ const TIME: Record<TimeOfDay, Preset> = {
   morning: { elevation: 16, azimuth: 115, sunColor: 0xffe2c0, sunIntensity: 2.8, hemiSky: 0xbfd6ff, hemiGround: 0x6d6a55, hemiIntensity: 0.7, exposure: 0.5, fog: 0xc9d6e2, night: 0, envIntensity: 0.32 },
   noon: { elevation: 52, azimuth: 150, sunColor: 0xfff5e6, sunIntensity: 3.2, hemiSky: 0xc7dcff, hemiGround: 0x74705c, hemiIntensity: 0.75, exposure: 0.44, fog: 0xc4d6e8, night: 0, envIntensity: 0.28 },
   sunset: { elevation: 5, azimuth: 250, sunColor: 0xffa46b, sunIntensity: 2.6, hemiSky: 0xf2b58c, hemiGround: 0x5a4a44, hemiIntensity: 0.55, exposure: 0.58, fog: 0xe0ae8a, night: 0.45, envIntensity: 0.3 },
-  night: { elevation: -14, azimuth: 250, sunColor: 0x9db4ff, sunIntensity: 0.35, hemiSky: 0x2a3d63, hemiGround: 0x120f0c, hemiIntensity: 0.45, exposure: 1.0, fog: 0x0b1320, night: 1, envIntensity: 0.4 },
+  night: { elevation: -14, azimuth: 250, sunColor: 0x9db4ff, sunIntensity: 0.45, hemiSky: 0x33496f, hemiGround: 0x16120e, hemiIntensity: 0.6, exposure: 1.0, fog: 0x0b1320, night: 1, envIntensity: 0.4 },
 };
 
 /** Sky, sun/moon, fog, rain and time-of-day controller. */
@@ -135,7 +135,7 @@ export class Environment {
       u.cloudDensity.value = 0.35 + overcast * 0.6;
       u.showSunDisc.value = overcast > 0.5 || time === 'night' ? 0 : 1;
     }
-    const dim = 1 - overcast * 0.55;
+    const dim = weather === 'rain' ? 0.28 : weather === 'fog' ? 0.45 : 1 - overcast * 0.5;
     this.sun.color.set(p.sunColor);
     this.sun.intensity = p.sunIntensity * dim;
     this.sun.castShadow = this.sun.castShadow && time !== 'night';
@@ -143,7 +143,7 @@ export class Environment {
     this.hemi.groundColor.set(p.hemiGround);
     this.hemi.intensity = p.hemiIntensity * (1 + overcast * 0.25);
     this.nightFactor = Math.min(1, p.night + (weather === 'rain' && time !== 'night' ? 0.35 : 0));
-    this.exposure = p.exposure;
+    this.exposure = p.exposure * (weather === 'rain' ? 1.35 : weather === 'fog' ? 1.2 : weather === 'cloudy' ? 1.1 : 1);
     (this.stars.material as THREE.PointsMaterial).opacity = time === 'night' && overcast < 0.6 ? 0.9 : 0;
     this.wetness = weather === 'rain' ? 1 : 0;
     this.grip = weather === 'rain' ? 0.7 : 1;
