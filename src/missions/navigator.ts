@@ -109,7 +109,7 @@ export class Navigator {
     if (!last && node.kind === 'roundabout') {
       const inArm = this.net.armOf(node, r.steps[i].edge);
       const outArm = this.net.armOf(node, r.steps[i + 1].edge);
-      if (inArm && outArm) verb = `Göbekli kavşakta ${roundaboutExit(node, inArm, outArm)}. çıkıştan çıkın`;
+      if (inArm && outArm) verb = `Dönel kavşakta ${roundaboutExit(node, inArm, outArm)}. çıkıştan çıkın`;
     }
     // Lane guidance on multi-lane approaches to the next turn
     let lanes: NavInstruction['lanes'] = null;
