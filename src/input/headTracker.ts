@@ -8,6 +8,20 @@ type Landmarker = {
   close(): void;
 };
 
+type VisionModule = {
+  FilesetResolver: { forVisionTasks(base: string): Promise<unknown> };
+  FaceLandmarker: {
+    createFromOptions(
+      fileset: unknown,
+      opts: {
+        baseOptions: { modelAssetPath: string; delegate: 'GPU' | 'CPU' };
+        runningMode: 'VIDEO';
+        numFaces: number;
+      },
+    ): Promise<Landmarker>;
+  };
+};
+
 const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm';
 const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
 
@@ -47,20 +61,37 @@ export class HeadTracker {
       video.srcObject = this.stream;
       await video.play();
       this.video = video;
-      const vision = await import('@mediapipe/tasks-vision');
+      // Load from CDN (not Vite-bundled): bundling @mediapipe creates a circular
+      // chunk (vision_bundle ↔ index) that breaks dynamic import on GitHub Pages
+      // after asset hash changes / partial cache. WASM/model already use CDN URLs.
+      const MEDIAPIPE_ESM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/+esm';
+      // @vite-ignore — keep out of Rollup graph (avoids circular vision↔index chunk).
+      const vision = (await import(/* @vite-ignore */ MEDIAPIPE_ESM)) as VisionModule;
       const fileset = await vision.FilesetResolver.forVisionTasks(WASM_URL);
-      this.landmarker = (await vision.FaceLandmarker.createFromOptions(fileset, {
-        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
-        runningMode: 'VIDEO',
-        numFaces: 1,
-      })) as unknown as Landmarker;
+      try {
+        this.landmarker = (await vision.FaceLandmarker.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
+          runningMode: 'VIDEO',
+          numFaces: 1,
+        })) as unknown as Landmarker;
+      } catch {
+        // Some devices reject the GPU delegate; fall back to CPU.
+        this.landmarker = (await vision.FaceLandmarker.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
+          runningMode: 'VIDEO',
+          numFaces: 1,
+        })) as unknown as Landmarker;
+      }
       this.status = 'running';
       this.calibrateNext = true;
       if (previewHost) this.attachPreview(previewHost);
       return true;
     } catch (e) {
       this.status = 'error';
-      this.error = e instanceof Error ? e.message : String(e);
+      const msg = e instanceof Error ? e.message : String(e);
+      this.error = /Failed to fetch dynamically imported module|Loading module|import/i.test(msg)
+        ? `Modül yüklenemedi (${msg}). Sayfayı hard-refresh deneyin (Ctrl+Shift+R); CDN engeli varsa ağ/eklentiyi kontrol edin.`
+        : msg;
       this.stop(false);
       return false;
     }
