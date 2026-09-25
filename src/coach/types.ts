@@ -69,7 +69,8 @@ export type EventKind =
   | 'emergency_yield_fail'
   | 'emergency_yield_ok'
   | 'stall'
-  | 'zone_speeding';
+  | 'zone_speeding'
+  | 'stopline_over';
 
 export type CoachEvent = {
   kind: EventKind;
@@ -140,6 +141,7 @@ export const EVENT_META: Record<EventKind, { label: string; component: Component
   emergency_yield_ok: { label: 'Geçiş üstünlüğü olan araca yol verildi', component: 'kural', severity: 'positive' },
   stall: { label: 'Motor stop etti', component: 'puruzsuzluk', severity: 'minor' },
   zone_speeding: { label: 'Özel bölgede hız ihlali', component: 'kural', severity: 'major' },
+  stopline_over: { label: 'Durma çizgisi aşıldı', component: 'kural', severity: 'minor' },
 };
 
 export const SEVERITY_LABEL: Record<Severity, string> = {

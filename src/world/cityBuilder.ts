@@ -132,6 +132,7 @@ export class CityWorld {
   readonly materials: CityMaterials;
   readonly map: MapDef;
   private flags: { mesh: THREE.Mesh; base: Float32Array }[] = [];
+  private treeTiles: { meshes: THREE.Object3D[]; x: number; z: number; r: number }[] = [];
   private rng: Rng;
   private lampCount = 0;
   private anisotropy: number;
@@ -957,6 +958,8 @@ export class CityWorld {
       tm.computeBoundingSphere();
       cm.computeBoundingSphere();
       this.group.add(detail(tm), detail(cm));
+      const bs = cm.boundingSphere!;
+      this.treeTiles.push({ meshes: [tm, cm], x: bs.center.x, z: bs.center.z, r: bs.radius });
     }
   }
 
@@ -1156,6 +1159,14 @@ export class CityWorld {
         arr[i + 2] = Math.sin(x * 1.8 - time * 5) * 0.14 * (x / 3);
       }
       pos.needsUpdate = true;
+    }
+  }
+
+  /** Distance LOD for vegetation tiles (they dominate the triangle budget in the countryside). */
+  updateLod(px: number, pz: number, maxDist: number) {
+    for (const t of this.treeTiles) {
+      const vis = Math.hypot(t.x - px, t.z - pz) - t.r < maxDist;
+      if (t.meshes[0].visible !== vis) for (const m of t.meshes) m.visible = vis;
     }
   }
 

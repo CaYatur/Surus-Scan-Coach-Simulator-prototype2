@@ -156,6 +156,8 @@ type Approach = {
   minKmh: number;
   yellowShouldStop: boolean;
   passed: boolean;
+  /** Crossed the stop line slowly on red — a violation only if the junction is then entered on red. */
+  pendingRed: boolean;
 };
 
 type JunctionEntry = {
@@ -497,7 +499,7 @@ export class DrivingMonitor {
       const lanes = this.net.incomingLanes(node, arm);
       if (!q.wrongWay && lanes.length && Math.abs(angleDiff(f.heading, lanes[0].heading)) < 1.0) {
         if (!this.approach || this.approach.node !== node || this.approach.arm !== arm) {
-          this.approach = { node, arm, lane: lanes[0], minKmh: f.kmh, yellowShouldStop: false, passed: false };
+          this.approach = { node, arm, lane: lanes[0], minKmh: f.kmh, yellowShouldStop: false, passed: false, pendingRed: false };
         }
         const a = this.approach;
         // distance from the front bumper to the stop line (in edge coords)
@@ -543,6 +545,16 @@ export class DrivingMonitor {
           rbYieldFail: false,
         };
         if (q.node.kind === 'roundabout') this.checkRoundaboutEntry(f, this.junction);
+        // crept over the stop line on red and then drove into the junction while still red
+        const ap = this.approach;
+        if (ap && ap.pendingRed && ap.node === q.node && this.signals) {
+          ap.pendingRed = false;
+          const sNow = this.signals.state(ap.node, ap.arm);
+          if (sNow === 'red' || sNow === 'redyellow') {
+            this.stats.redLights++;
+            this.emit('red_light', f.x, f.z, 'Kırmızı ışıkta kavşağa girdiniz!');
+          } else this.emit('stopline_over', f.x, f.z, 'Kırmızıda durma çizgisini aştınız — çizginin gerisinde durun');
+        }
       } else if (q.node.signalized && f.kmh < 2 && this.junction.arm && this.signals && f.signal === 'none' && Math.abs(angleDiff(f.heading, this.junction.heading)) < 0.35) {
         // stuck in the junction box while our own approach is red → blocking the junction
         const st2 = this.signals.state(q.node, this.junction.arm);
@@ -637,8 +649,10 @@ export class DrivingMonitor {
       st.signalsPassed++;
       const s = this.signals.state(a.node, a.arm);
       if (s === 'red' || s === 'redyellow') {
-        st.redLights++;
-        this.emit('red_light', f.x, f.z, 'Kırmızı ışıkta geçtiniz!');
+        if (f.kmh >= 8) {
+          st.redLights++;
+          this.emit('red_light', f.x, f.z, 'Kırmızı ışıkta geçtiniz!');
+        } else a.pendingRed = true;
       } else if (s === 'yellow' && a.yellowShouldStop) {
         this.emit('yellow_risky', f.x, f.z, 'Sarı ışıkta durabilecekken geçtiniz');
       }

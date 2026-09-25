@@ -97,6 +97,7 @@ export class Session implements MissionHost {
   private stimText: string | null = null;
   private odometer = 0;
   private zoneNotice: string | null = null;
+  private lodTimer = 0;
   private cruise = { on: false, set: 0, integ: 0 };
   private lastStalls = 0;
   private autoLightWanted: boolean | null = null;
@@ -802,6 +803,11 @@ export class Session implements MissionHost {
     );
     b.env.update(dt, this.tmpV.set(this.dyn.x, 0, this.dyn.z), this.camera);
     b.world.update(this.elapsed);
+    this.lodTimer -= dt;
+    if (this.lodTimer <= 0) {
+      this.lodTimer = 0.5;
+      b.world.updateLod(this.camera.position.x, this.camera.position.z, this.q.drawDistance * 1.05 + 60);
+    }
     b.traffic.render(dt, this.dyn.x, this.dyn.z, this.car.blinkOn, Math.min(260, this.q.drawDistance * 0.5));
     b.update(dt);
     // mirrors: always in cockpit view; otherwise only while glancing (HUD overlay)

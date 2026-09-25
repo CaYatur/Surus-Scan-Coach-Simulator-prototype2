@@ -208,7 +208,7 @@ export function computeSession(inp: ScoreInput): SessionResult {
   // ——— Kural ———
   const overFrac = st.overTime / movingTime;
   add('speed', 'kural', 'Hız sınırı uyumu', 100 - overFrac * 220 - (st.overSevereTime / movingTime) * 200, `%${Math.round((1 - overFrac) * 100)} sınır içinde · ${count('speeding')} ihlal`, 'Bölge hız sınırı + tolerans (okul bölgesi 3 km/h) üzerinden hesaplanır.', 2.5);
-  add('red_light', 'kural', 'Trafik ışıkları', st.signalsPassed + st.redLights > 0 ? 100 - st.redLights * 45 - count('yellow_risky') * 12 : null, `${st.signalsPassed} ışıklı kavşak · ${st.redLights} kırmızı`, 'Kırmızıda geçiş ağır ihlaldir.', 2);
+  add('red_light', 'kural', 'Trafik ışıkları', st.signalsPassed + st.redLights > 0 ? 100 - st.redLights * 45 - count('yellow_risky') * 12 - count('stopline_over') * 6 : null, `${st.signalsPassed} ışıklı kavşak · ${st.redLights} kırmızı`, 'Kırmızıda geçiş ağır ihlaldir.', 2);
   const ss = st.stopSigns;
   add('stop_sign', 'kural', 'DUR levhası', ss.total ? (ss.full / ss.total) * 100 - count('stop_ignored') * 20 : null, ss.total ? `${ss.full}/${ss.total} tam duruş` : 'DUR levhası yok', 'DUR levhasında tekerlekler tamamen durmalıdır.', 1.5);
   add('right_of_way', 'kural', 'Geçiş önceliği & yaya', 100 - count('yield_fail') * 35 - st.pedConflicts * 40, `${count('yield_fail')} öncelik · ${st.pedConflicts} yaya ihlali · ${st.pedYielded} yol verme`, 'Yaya geçidinde ve ana yol trafiğinde öncelik kuralları.', 2);

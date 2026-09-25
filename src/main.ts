@@ -156,6 +156,7 @@ class App implements AppApi {
   }
 
   quitToMenu() {
+    this.session?.bundle.world.updateLod(0, 0, 1e9);
     this.session?.dispose();
     this.session = null;
     this.head.stop();
