@@ -339,7 +339,7 @@ export function pickup(title: string, x: number, z: number, name: string): Step 
 export function roundaboutPass(title: string, target: { x: number; z: number; name: string }): Step {
   return {
     title,
-    hint: 'Göbeğe yaklaşırken yavaşlayın, içerideki araca yol verin; çıkmadan önce sağ sinyal verin.',
+    hint: 'Dönele yaklaşırken yavaşlayın, içerideki araca yol verin; çıkmadan önce sağ sinyal verin.',
     start(h, c) {
       c.data.rb0 = h.monitor.stats.roundabouts.total;
       h.navigate(target.x, target.z, target.name);
@@ -419,7 +419,7 @@ const comfort = (): Constraint => ({
 });
 const noShoulder = (): Constraint => ({ title: 'Emniyet şeridine girmeden', ok: (h) => h.monitor.count('shoulder_drive') === 0 });
 const noRightOvertake = (): Constraint => ({ title: 'Sağdan sollama yok', ok: (h) => h.monitor.stats.rightOvertakes === 0 });
-const rbRules = (): Constraint => ({ title: 'Göbekte yol verme + çıkış sinyali', ok: (h) => h.monitor.count('rb_yield_fail') + h.monitor.count('rb_no_exit_signal') === 0 });
+const rbRules = (): Constraint => ({ title: 'Dönelde yol verme + çıkış sinyali', ok: (h) => h.monitor.count('rb_yield_fail') + h.monitor.count('rb_no_exit_signal') === 0 });
 const zoneRules = (): Constraint => ({ title: 'Bölge hız sınırlarına uy', ok: (h) => h.monitor.count('zone_speeding') + h.monitor.count('speeding') === 0 });
 const noHorn = (): Constraint => ({ title: 'Korna yasağına uy', ok: (h) => h.monitor.stats.hornViolations === 0 });
 const yieldEmergency = (): Constraint => ({ title: 'Sirenli araca yol ver', ok: (h) => h.monitor.count('emergency_yield_fail') === 0 });
@@ -738,9 +738,9 @@ export const MISSIONS: MissionDef[] = [
   },
   {
     id: 'roundabouts',
-    title: 'Göbekli Kavşaklar',
+    title: 'Dönel Kavşaklar',
     subtitle: 'Öncelik ve çıkış sinyali',
-    description: 'İki göbekli kavşaktan geç. Kavşak içindeki araç önceliklidir; girerken yol ver, çıkacağın yoldan önce sağ sinyal ver.',
+    description: 'İki dönel kavşaktan geç. Kavşak içindeki araç önceliklidir; girerken yol ver, çıkacağın yoldan önce sağ sinyal ver.',
     map: 'city',
     icon: '⭕',
     difficulty: 2,
@@ -748,10 +748,10 @@ export const MISSIONS: MissionDef[] = [
     category: 'city',
     board: true,
     conditions: { time: 'noon', weather: 'clear', traffic: 1.3 },
-    skills: ['Göbekli kavşak', 'Geçiş önceliği', 'Sinyal'],
+    skills: ['Dönel kavşak', 'Geçiş hakkı', 'Sinyal'],
     steps: (h) => [
-      roundaboutPass('⭕ Botanik göbeğinden batıya (Mevlana Cd.) çık', { ...lanePoint(h, 230, -320, -Math.PI / 2), name: 'Mevlana Caddesi' }),
-      roundaboutPass('⭕ Yıldırım göbeğinden güneye (İstiklal Cd.) çık', { ...lanePoint(h, -370, 440, 0), name: 'İstiklal Caddesi' }),
+      roundaboutPass('⭕ Botanik dönelinden batıya (Mevlana Cd.) çık', { ...lanePoint(h, 230, -320, -Math.PI / 2), name: 'Mevlana Caddesi' }),
+      roundaboutPass('⭕ Yıldırım dönelinden güneye (İstiklal Cd.) çık', { ...lanePoint(h, -370, 440, 0), name: 'İstiklal Caddesi' }),
     ],
     constraints: () => [rbRules(), noCollision()],
   },

@@ -622,7 +622,7 @@ export class DrivingMonitor {
       if (da > 0.05 && da < 1.7 && (da * n.ringR) / c.v < 2.4) {
         j.rbYieldFail = true;
         this.stats.roundabouts.yieldFail++;
-        this.emit('rb_yield_fail', f.x, f.z, 'Göbekli kavşakta içerideki (dönen) araca yol vermediniz');
+        this.emit('rb_yield_fail', f.x, f.z, 'Dönel kavşakta içerideki (dönen) araca yol vermediniz');
         break;
       }
     }
@@ -633,8 +633,8 @@ export class DrivingMonitor {
     rb.total++;
     const signaled = f.t - this.lastRightSignalT < 1.6;
     if (signaled) rb.exitSignal++;
-    else this.emit('rb_no_exit_signal', f.x, f.z, 'Göbekli kavşaktan çıkarken sağ sinyal verin');
-    if (signaled && !j.rbYieldFail) this.emit('rb_good', f.x, f.z, 'Göbekli kavşak: yol verme ve çıkış sinyali doğru');
+    else this.emit('rb_no_exit_signal', f.x, f.z, 'Dönel kavşaktan çıkarken sağ sinyal verin');
+    if (signaled && !j.rbYieldFail) this.emit('rb_good', f.x, f.z, 'Dönel kavşak: yol verme ve çıkış sinyali doğru');
     if (this.signalState.side !== 'none') {
       this.signalState.maneuverDone = true;
       this.signalState.doneT = f.t;
@@ -704,7 +704,7 @@ export class DrivingMonitor {
     const tol = sensitive ? 3 : Math.max(6, Math.round(lim * 0.1));
     const over = f.kmh - lim;
     // per-zone bookkeeping (road type when outside special zones)
-    const key = zone ? zone.label : f.q.edge ? `${f.q.edge.spec.label} (${lim})` : f.q.node?.kind === 'bend' ? `Çevre yolu virajı (${lim})` : f.q.node?.kind === 'roundabout' ? `Göbekli kavşak (${lim})` : null;
+    const key = zone ? zone.label : f.q.edge ? `${f.q.edge.spec.label} (${lim})` : f.q.node?.kind === 'bend' ? `Çevre yolu virajı (${lim})` : f.q.node?.kind === 'roundabout' ? `Dönel kavşak (${lim})` : null;
     if (key && f.kmh > 3) {
       const zs = st.zones[key] ?? (st.zones[key] = { time: 0, over: 0, maxOver: 0, limit: lim });
       zs.time += f.dt;

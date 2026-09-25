@@ -187,7 +187,7 @@ export function computeSession(inp: ScoreInput): SessionResult {
     col.vehicle + col.static + col.pedestrian === 0 ? 'Hiç çarpışma yok.' : 'Her çarpışma güvenlik puanını ciddi düşürür.',
     3
   );
-  add('near_miss', 'guvenlik', 'Ramak kala (TTC < 1.6 sn)', 100 - st.nearMiss * 22, `${st.nearMiss} olay · min TTC ${isFinite(st.minTTC) ? st.minTTC.toFixed(1) + ' sn' : '—'}`, 'Öndeki araca çarpma süresi (TTC) kritik eşiğin altına düştüğünde sayılır.', 2);
+  add('near_miss', 'guvenlik', 'Ramak kala (min TTC < 1.6 sn)', 100 - st.nearMiss * 22, `${st.nearMiss} olay · min TTC ${isFinite(st.minTTC) ? st.minTTC.toFixed(1) + ' sn' : '—'}`, 'Öndeki araca çarpma süresi (TTC) kritik eşiğin altına düştüğünde sayılır.', 2);
   const headwayOk = st.followTime > 5 ? 1 - st.headwayBelow2 / st.followTime : 1;
   add(
     'headway',
@@ -199,7 +199,7 @@ export function computeSession(inp: ScoreInput): SessionResult {
     2
   );
   const hardRate = perKm(st.hardBrake * 1 + st.hardAccel * 0.5 + st.harshCorner * 0.8);
-  add('hard_events', 'guvenlik', 'Sert olay oranı', 100 - hardRate * 7, `${st.hardBrake} fren · ${st.hardAccel} gaz · ${st.harshCorner} viraj (${km.toFixed(2)} km)`, 'Olaylar mesafe (km) ile normalize edildi.', 1.2);
+  add('hard_events', 'guvenlik', 'Ani manevra oranı', 100 - hardRate * 7, `${st.hardBrake} fren · ${st.hardAccel} gaz · ${st.harshCorner} viraj (${km.toFixed(2)} km)`, 'Olaylar mesafe (km) ile normalize edildi.', 1.2);
   if (st.reactionTimes.length) {
     const r = mean(st.reactionTimes);
     add('reaction', 'guvenlik', 'Tepki süresi', 100 - Math.max(0, r - 0.7) * 70, `${r.toFixed(2)} sn (ort. ${st.reactionTimes.length} ölçüm)`, 'Uyarı ile frene basma arasındaki süre. 1 sn altı iyi kabul edilir.', 1.5);
@@ -211,7 +211,7 @@ export function computeSession(inp: ScoreInput): SessionResult {
   add('red_light', 'kural', 'Trafik ışıkları', st.signalsPassed + st.redLights > 0 ? 100 - st.redLights * 45 - count('yellow_risky') * 12 - count('stopline_over') * 6 : null, `${st.signalsPassed} ışıklı kavşak · ${st.redLights} kırmızı`, 'Kırmızıda geçiş ağır ihlaldir.', 2);
   const ss = st.stopSigns;
   add('stop_sign', 'kural', 'DUR levhası', ss.total ? (ss.full / ss.total) * 100 - count('stop_ignored') * 20 : null, ss.total ? `${ss.full}/${ss.total} tam duruş` : 'DUR levhası yok', 'DUR levhasında tekerlekler tamamen durmalıdır.', 1.5);
-  add('right_of_way', 'kural', 'Geçiş önceliği & yaya', 100 - count('yield_fail') * 35 - st.pedConflicts * 40, `${count('yield_fail')} öncelik · ${st.pedConflicts} yaya ihlali · ${st.pedYielded} yol verme`, 'Yaya geçidinde ve ana yol trafiğinde öncelik kuralları.', 2);
+  add('right_of_way', 'kural', 'Geçiş hakkı & yaya', 100 - count('yield_fail') * 35 - st.pedConflicts * 40, `${count('yield_fail')} öncelik · ${st.pedConflicts} yaya ihlali · ${st.pedYielded} yol verme`, 'Yaya geçidinde ve ana yol trafiğinde öncelik kuralları.', 2);
   const man = st.turns.total + st.laneChanges.total;
   const sig = st.turns.signaled + st.laneChanges.signaled;
   add('signals', 'kural', 'Sinyal kullanımı', man ? pct(sig, man) * 100 - count('wrong_signal') * 10 : null, man ? `${sig}/${man} manevrada sinyal` : 'manevra yok', 'Dönüş ve şerit değişimlerinden önce sinyal.', 2);
@@ -230,7 +230,7 @@ export function computeSession(inp: ScoreInput): SessionResult {
   }
   if (st.roundabouts.total) {
     const rb = st.roundabouts;
-    add('roundabout', 'kural', 'Göbekli kavşak', pct(rb.exitSignal, rb.total) * 100 - rb.yieldFail * 30, `${rb.exitSignal}/${rb.total} çıkışta sinyal · ${rb.yieldFail} yol vermeme`, 'Kavşak içindeki araç önceliklidir; çıkarken sağ sinyal verin.', 1.2);
+    add('roundabout', 'kural', 'Dönel kavşak', pct(rb.exitSignal, rb.total) * 100 - rb.yieldFail * 30, `${rb.exitSignal}/${rb.total} çıkışta sinyal · ${rb.yieldFail} yol vermeme`, 'Kavşak içindeki araç önceliklidir; çıkarken sağ sinyal verin.', 1.2);
   }
   const sensitiveTime = Object.entries(st.zones)
     .filter(([k]) => /OKUL|HASTANE|ÇARŞI/.test(k))
@@ -256,7 +256,7 @@ export function computeSession(inp: ScoreInput): SessionResult {
   add('mirror_rate', 'tarama', 'Ayna kontrol sıklığı', movingTime > 30 ? clamp(rate / 6, 0, 1) * 100 - Math.max(0, inp.maxMirrorGap - 30) * 1.2 : null, `${rate.toFixed(1)} /dk · en uzun ara ${inp.maxMirrorGap.toFixed(0)} sn`, 'Önerilen: her 5–8 sn\'de bir dikiz/yan ayna.', 2);
   const js = st.junctionScans;
   add('junction_scan', 'tarama', 'Kavşak taraması', js.total ? pct(js.ok, js.total) * 100 : null, js.total ? `${js.ok}/${js.total} kavşak` : 'kontrolsüz kavşak yok', 'DUR/Yol ver kavşaklarında girmeden önce sol-sağ kontrol.', 1.5);
-  add('attention', 'tarama', 'Dikkat (girdi boşlukları)', 100 - st.idleGaps * 12, `${st.idleGaps} uzun boşluk`, 'Klavye/kol hareketsizliği — klinik dikkat ölçümü değildir.', 0.6);
+  add('attention', 'tarama', 'Dikkat proxy\'si (girdi boşluğu)', 100 - st.idleGaps * 12, `${st.idleGaps} uzun boşluk`, 'Klavye/kol hareketsizliği — klinik dikkat ölçümü değildir.', 0.6);
 
   // ——— Pürüzsüzlük ———
   const jerks: number[] = [];
@@ -268,10 +268,10 @@ export function computeSession(inp: ScoreInput): SessionResult {
   const latOk = moving.length ? moving.filter((s) => Math.abs(s.latAccel) < 2.5).length / moving.length : 1;
   add('lat_comfort', 'puruzsuzluk', 'Yanal konfor', latOk * 100 - (1 - latOk) * 80, `%${Math.round(latOk * 100)} süre < 0.25 g`, 'Virajlarda yanal ivme yolcu konforunu belirler.', 1.5);
   const srr = steeringReversals(samples);
-  add('srr', 'puruzsuzluk', 'Direksiyon düzeltme oranı (SRR)', srr > 0 ? 100 - Math.max(0, srr - 8) * 3 : null, `${srr.toFixed(1)} /dk`, 'Steering Reversal Rate — sık küçük düzeltmeler düşük dikkati/kararsızlığı gösterebilir.', 1);
+  add('srr', 'puruzsuzluk', 'Direksiyon yön değiştirme oranı (SRR)', srr > 0 ? 100 - Math.max(0, srr - 8) * 3 : null, `${srr.toFixed(1)} /dk`, 'Steering Reversal Rate — sık küçük düzeltmeler düşük dikkati/kararsızlığı gösterebilir.', 1);
   if (st.laneKeepN > 600) {
     const rms = Math.sqrt(st.laneKeepSq / st.laneKeepN);
-    add('lane_keeping', 'puruzsuzluk', 'Şerit ortalama (şerit takibi)', 100 - Math.max(0, rms - 0.3) * 110, `ortalama sapma ${rms.toFixed(2)} m`, 'Aracı şeridin ortasında tutma becerisi (küçük düzeltmeler şerit değişimi sayılmaz).', 1.2);
+    add('lane_keeping', 'puruzsuzluk', 'Şerit pozisyonu sapması (RMS)', 100 - Math.max(0, rms - 0.3) * 110, `RMS sapma ${rms.toFixed(2)} m`, 'Aracı şeridin ortasında tutma becerisi (küçük düzeltmeler şerit değişimi sayılmaz).', 1.2);
   }
   const cruise = moving.filter((s) => !s.inJunction && s.kmh > 20);
   const cv = cruise.length > 30 ? std(cruise.map((s) => s.kmh)) / Math.max(1, mean(cruise.map((s) => s.kmh))) : 0;
@@ -349,7 +349,7 @@ export function computeSession(inp: ScoreInput): SessionResult {
     route: 'Navigasyon talimatını erken okuyun ve dönüş şeridine zamanında geçin.',
     resets: 'Hata sonrası aracı sıfırlamak yerine güvenle geri manevra yapmayı deneyin.',
     highway: 'Bölünmüş yolda sağ şeridi kullanın; sollamayı soldan yapın ve emniyet şeridine girmeyin.',
-    roundabout: 'Göbekli kavşakta içerideki araca yol verin ve çıkacağınız yoldan önce sağ sinyal verin.',
+    roundabout: 'Dönel kavşakta içerideki araca yol verin ve çıkacağınız yoldan önce sağ sinyal verin.',
     zone_rules: 'Okul ve hastane bölgesinde 30, çarşıda 20 km/h sınırına uyun; bu bölgelerde korna çalmayın.',
     emergency: 'Sireni duyduğunuzda aynaya bakın, sağa yanaşın ve geçmesine izin verin.',
     lane_keeping: 'Bakışınızı uzağa, şeridin ortasına yöneltin; direksiyona küçük ve yumuşak düzeltmeler yapın.',
@@ -358,7 +358,7 @@ export function computeSession(inp: ScoreInput): SessionResult {
     if (TIP[s.id]) tips.push(TIP[s.id]);
     if (tips.length >= 4) break;
   }
-  if (!tips.length) tips.push('Harika bir sürüş! Tarama alışkanlığını ve yumuşak sürüşü korumaya devam edin.');
+  if (!tips.length) tips.push('Harika bir sürüş! Gözlem alışkanlığını ve yumuşak sürüşü korumaya devam edin.');
   const strengths = subs
     .filter((s) => s.score != null && (s.score as number) >= 90)
     .sort((a, b) => b.w - a.w)
