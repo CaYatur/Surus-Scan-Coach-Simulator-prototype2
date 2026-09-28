@@ -17,7 +17,7 @@ import { missionById } from '../missions/catalog';
 import type { WorldBundle } from './worldBundle';
 import type { Hud } from '../ui/hud';
 import { audio } from '../audio/audio';
-import { actionKeys } from '../input/bindings';
+import { controlDevice, expandPromptText, promptHtml, promptPlain } from '../input/prompts';
 import type { TimeOfDay, Weather } from '../world/environment';
 import { TIME_LABEL, WEATHER_LABEL } from '../world/environment';
 import type { RenderPipeline } from '../render/pipeline';
@@ -136,7 +136,7 @@ export class Session implements MissionHost {
     const t = this.mirrors.textures();
     this.car.cockpit.setMirrorTextures(t.left, t.right, t.rear);
     this.car.cockpit.setScreenMapDrawer((g, w, h) => {
-      bundle.mapRenderer.drawMini(g, w, h, { player: { x: this.dyn.x, z: this.dyn.z, heading: this.dyn.heading }, route: bundle.nav.route?.line, markers: bundle.markerList() }, 110, false);
+      bundle.mapRenderer.drawMini(g, w, h, { player: { x: this.dyn.x, z: this.dyn.z, heading: this.dyn.heading }, route: this.routeLine(), markers: bundle.markerList() }, 110, false);
     });
     this.monitor = new DrivingMonitor(bundle.world.net, bundle.signals);
     this.monitor.onEvent = (e) => this.onCoachEvent(e);
@@ -384,7 +384,7 @@ export class Session implements MissionHost {
       const shift = (t: number | 'up' | 'down') => {
         const r = this.dyn.shiftManual(t, s.clutchAssist);
         if (r === 'grind') {
-          this.hud.toast(`Vites girmedi — önce debriyaja basın (${actionKeys('clutch')})`, 'warn');
+          this.hud.toast(`Vites girmedi — önce debriyaja basın (${promptPlain('clutch')})`, 'warn');
           audio.cue('bad');
         } else if (r === 'blocked') this.hud.toast('Geri vitese takmak için önce tamamen durun', 'warn');
       };
@@ -449,7 +449,7 @@ export class Session implements MissionHost {
     near.lane.path.sample(Math.min(near.lane.path.length - 2, near.s), p);
     this.dyn.reset(p.x, p.z, p.h);
     this.monitor.registerReset(p.x, p.z);
-    this.hud.toast(`Araç en yakın şeride alındı (${actionKeys('reset')})`, 'warn');
+    this.hud.toast(`Araç en yakın şeride alındı (${promptPlain('reset')})`, 'warn');
   }
 
   update(dtRaw: number) {
@@ -496,7 +496,7 @@ export class Session implements MissionHost {
     // stalled engine (manual gearbox without clutch assist)
     if (this.dyn.stalls !== this.lastStalls) {
       this.lastStalls = this.dyn.stalls;
-      this.monitor.emit('stall', this.dyn.x, this.dyn.z, `Motor stop etti — debriyaja basıp (${actionKeys('clutch')}) gaza dokunarak yeniden çalıştırın`);
+      this.monitor.emit('stall', this.dyn.x, this.dyn.z, `Motor stop etti — debriyaja basıp (${promptPlain('clutch')}) gaza dokunarak yeniden çalıştırın`);
     }
     // automatic headlights (dusk / night / rain)
     if (s.autoLights) {
@@ -601,6 +601,14 @@ export class Session implements MissionHost {
     // ——— Navigation & mission ———
     b.nav.update(dt, { x: this.dyn.x, z: this.dyn.z, heading: this.dyn.heading }, q, s.voiceNav);
     b.nav.guide.setVisible(s.routeGuideLine);
+    if (b.nav.arrived) {
+      b.clearMarker('free');
+      // Mission steps still read `arrived` this frame. Free drive drops the pin and the route.
+      if (!this.runner) {
+        b.nav.clear();
+        this.hud.toast('Hedefe ulaştınız', 'good', 2400);
+      }
+    }
     if (this.runner) {
       this.runner.update(dt);
       if (this.runner.state !== 'running') {
@@ -629,21 +637,28 @@ export class Session implements MissionHost {
   private hintCache = { key: '', html: '' };
   private hintLine(): string {
     const s = settings.get();
-    const key = `${s.transmission}|${JSON.stringify(s.keyBindings)}|${s.scanMode}`;
+    const dev = controlDevice();
+    const key = `${s.transmission}|${JSON.stringify(s.keyBindings)}|${s.scanMode}|${dev}`;
     if (this.hintCache.key === key) return this.hintCache.html;
-    const k = (a: Parameters<typeof actionKeys>[0]) => `<b>${actionKeys(a)}</b>`;
+    const k = (a: Parameters<typeof promptHtml>[0]) => promptHtml(a);
+    const has = (a: Parameters<typeof promptHtml>[0]) => k(a) !== '—';
     const parts = [
-      `${k('throttle')} gaz`,
-      `${k('brake')} fren`,
-      `${k('handbrake')} el freni`,
-      `${k('signalL')}/${k('signalR')} sinyal`,
-      `${k('mirrorL')}/${k('mirrorRear')}/${k('mirrorR')} ayna`,
-      s.transmission === 'manual' ? `${k('gearUp')}/${k('gearDown')} vites · ${k('clutch')} debriyaj` : s.transmission === 'selector' ? `${k('gearD')} D · ${k('gearR')} R` : '',
-      `${k('cruise')} sabitleyici`,
-      `${k('camera')} kamera`,
-      `${k('map')} harita`,
-      `${k('pause')} menü`,
-      `${k('help')} yardım`,
+      has('throttle') ? `${k('throttle')} gaz` : '',
+      has('brake') ? `${k('brake')} fren` : '',
+      has('steerLeft') ? `${k('steerLeft')} direksiyon` : '',
+      has('handbrake') ? `${k('handbrake')} el freni` : '',
+      has('signalL') && has('signalR') ? `${k('signalL')}/${k('signalR')} sinyal` : '',
+      has('mirrorL') ? `${k('mirrorL')}/${k('mirrorRear')}/${k('mirrorR')} ayna` : '',
+      s.transmission === 'manual'
+        ? [has('gearUp') ? `${k('gearUp')}/${k('gearDown')} vites` : '', has('clutch') ? `${k('clutch')} debriyaj` : ''].filter(Boolean).join(' · ')
+        : s.transmission === 'selector'
+          ? [has('gearD') ? `${k('gearD')} D` : '', has('gearR') ? `${k('gearR')} R` : ''].filter(Boolean).join(' · ')
+          : '',
+      has('cruise') ? `${k('cruise')} sabitleyici` : '',
+      has('camera') ? `${k('camera')} kamera` : '',
+      has('map') ? `${k('map')} harita` : '',
+      has('pause') ? `${k('pause')} menü` : '',
+      has('help') ? `${k('help')} yardım` : '',
     ].filter(Boolean);
     this.hintCache = { key, html: parts.join(' · ') };
     return this.hintCache.html;
@@ -872,11 +887,13 @@ export class Session implements MissionHost {
       if (this.runner) {
         const r = this.runner;
         const limit = r.def.timeLimit ? ` / ${formatTime(r.def.timeLimit)}` : '';
-        hud.setMission(`${r.def.icon} ${r.def.title}`, r.def.subtitle, r.objectives(), r.hint, formatTime(r.elapsed) + limit);
+        hud.setMission(`${r.def.icon} ${r.def.title}`, r.def.subtitle, r.objectives(), expandPromptText(r.hint), formatTime(r.elapsed) + limit);
       } else {
+        const mapKey = promptPlain('map');
+        const boardKey = promptPlain('missions');
         hud.setMission(
           this.segment === 'free' ? '🚗 Serbest sürüş' : '',
-          this.bundle.map.id === 'city' ? 'Görev panosu: J · Harita: M (hedef seçmek için tıkla)' : 'Eğitim alanı — M ile haritadan hedef seç',
+          this.bundle.map.id === 'city' ? `Görev panosu: ${boardKey} · Harita: ${mapKey} (hedef seçmek için tıkla)` : `Eğitim alanı — ${mapKey} ile haritadan hedef seç`,
           [],
           '',
           formatTime(segT)
@@ -901,7 +918,7 @@ export class Session implements MissionHost {
       const g = hud.minimap.getContext('2d')!;
       b.mapRenderer.drawMini(g, hud.minimap.width, hud.minimap.height, {
         player: { x: this.dyn.x, z: this.dyn.z, heading: this.dyn.heading },
-        route: b.nav.route?.line,
+        route: this.routeLine(),
         cars: b.traffic.cars,
         markers: b.markerList(),
       }, 110 + Math.min(200, this.dyn.kmh * 1.6));
@@ -1016,6 +1033,25 @@ export class Session implements MissionHost {
     this.paused = p;
     audio.setActive(!p);
     this.input.flush();
+  }
+
+  /** Route polyline while a destination is still active. Hidden once you have arrived. */
+  routeLine(): number[] | null {
+    const n = this.bundle.nav;
+    return !n.route || n.arrived ? null : n.route.line;
+  }
+
+  navDestination(): { x: number; z: number } | null {
+    const n = this.bundle.nav;
+    return !n.route || n.arrived ? null : n.route.dest;
+  }
+
+  /** Drop a destination set from the map (route, guide and beacon). */
+  clearMapTarget() {
+    const had = !!this.bundle.nav.route;
+    this.bundle.nav.clear();
+    this.bundle.clearMarker('free');
+    this.hud.toast(had ? 'Hedef kaldırıldı' : 'Seçili hedef yok', had ? 'info' : 'warn');
   }
 
   /** Big-map click: navigate there (free drive). */

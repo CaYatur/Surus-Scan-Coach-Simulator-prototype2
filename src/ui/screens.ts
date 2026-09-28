@@ -2,6 +2,7 @@ import { el, esc, fmtDate, scoreColor, download } from './dom';
 import { lineChart, radarSvg, stars } from './charts';
 import { settings, DEFAULT_SETTINGS, CONTROL_PRESETS, PRESET_KEYS, type Settings, type QualityLevel, type ControlPreset } from '../core/settings';
 import { BIND_META, actionKeys, bindings, keyLabel, rebind, resetBindings, type BindAction } from '../input/bindings';
+import { controlDevice, promptHtml } from '../input/prompts';
 import { MISSIONS, missionById } from '../missions/catalog';
 import type { MissionDef, MissionCategory } from '../missions/mission';
 import { MAPS } from '../world/mapDefs';
@@ -37,7 +38,8 @@ export interface AppApi {
   qualityChanged(): void;
   inSession(): boolean;
   sessionMapId(): 'training' | 'city' | null;
-  bigMap(canvas: HTMLCanvasElement): ((sx: number, sy: number) => void) | null;
+  bigMap(canvas: HTMLCanvasElement): ((sx: number, sy: number) => boolean) | null;
+  clearMapTarget(): void;
   head: HeadTracker;
   detectedQuality: QualityLevel;
 }
@@ -845,20 +847,34 @@ export class Screens {
 
   bigMap() {
     const cv = el('canvas', { class: 'bigmap', width: 1100, height: 780 }) as HTMLCanvasElement;
+    let pick = this.app.bigMap(cv);
+    const redraw = () => {
+      pick = this.app.bigMap(cv);
+    };
     const box = el('div', {}, [
-      el('div', { class: 'ov-head' }, [el('h2', { text: '🗺️ Harita' }), el('span', { class: 'muted', text: 'Hedef seçmek için tıklayın · M / Esc kapat' }), this.btn('Kapat', 'ghost', () => {
-        this.closeOverlay();
-        this.app.resume();
-      })]),
+      el('div', { class: 'ov-head' }, [
+        el('h2', { text: '🗺️ Harita' }),
+        el('span', { class: 'muted', text: 'Tıklayınca hedef konur · hedef işaretine tıklayınca kalkar · M / Esc kapat' }),
+        this.btn('Hedefi kaldır', 'ghost', () => {
+          this.app.clearMapTarget();
+          redraw();
+        }),
+        this.btn('Kapat', 'ghost', () => {
+          this.closeOverlay();
+          this.app.resume();
+        }),
+      ]),
       cv,
     ]);
     this.openOverlay(box, 'dim wide');
-    const pick = this.app.bigMap(cv);
     cv.onclick = (e) => {
       const r = cv.getBoundingClientRect();
-      pick?.((e.clientX - r.left) * (cv.width / r.width), (e.clientY - r.top) * (cv.height / r.height));
-      this.closeOverlay();
-      this.app.resume();
+      const stay = pick?.((e.clientX - r.left) * (cv.width / r.width), (e.clientY - r.top) * (cv.height / r.height));
+      if (stay) redraw();
+      else {
+        this.closeOverlay();
+        this.app.resume();
+      }
     };
   }
 
@@ -900,8 +916,9 @@ export class Screens {
 
 /** Key reference built from the live bindings. */
 function keymapHtml(): string {
-  const k = (a: BindAction) => bindings()[a].map((c) => `<kbd>${esc(keyLabel(c))}</kbd>`).join(' ') || '—';
+  const k = (a: BindAction) => promptHtml(a);
   const s = settings.get();
+  const dev = controlDevice();
   const gears =
     s.transmission === 'manual'
       ? `<tr><td>${k('gearUp')} ${k('gearDown')}</td><td>Vites yükselt / düşür</td><td>${k('gear1')}…${k('gear6')}</td><td>Doğrudan vites · ${k('gearR')} geri · ${k('gearN')} boş</td></tr><tr><td>${k('clutch')}</td><td>Debriyaj${s.clutchAssist ? ' (yardım açık)' : ''}</td><td></td><td></td></tr>`
@@ -921,12 +938,12 @@ function keymapHtml(): string {
 ${gears}
 <tr><th colspan="2">Görünüm</th><th colspan="2">Diğer</th></tr>
 <tr><td>${k('camera')}</td><td>Kamera değiştir (6 mod)</td><td>${k('lights')}</td><td>Farlar</td></tr>
-<tr><td>Sağ tık + sürükle</td><td>Serbest bakış</td><td>${k('wipers')}</td><td>Silecek</td></tr>
+<tr><td>${dev === 'keyboard' ? 'Sağ tık + sürükle' : k('mirrorL')}</td><td>${dev === 'keyboard' ? 'Serbest bakış' : 'Sağ çubuk: yan ayna, sonuna kadar omuz, yukarı veya aşağı iç dikiz'}</td><td>${k('wipers')}</td><td>Silecek</td></tr>
 <tr><td>${k('map')}</td><td>Harita / hedef seç</td><td>${k('reset')}</td><td>Aracı şeride al</td></tr>
 <tr><td>${k('missions')}</td><td>Görev panosu</td><td>${k('hud')}</td><td>HUD modu</td></tr>
 <tr><td>${k('pause')}</td><td>Duraklat</td><td>${k('recenter')}</td><td>Kafa takibini merkezle</td></tr>
-<tr><th colspan="4">Gamepad</th></tr>
-<tr><td colspan="4">Sol çubuk direksiyon · RT gaz · LT fren · B el freni · LB/RB sinyal · Sağ çubuk ayna/omuz bakışı · Y kamera · X dörtlü · A korna · R3 hız sabitleyici · Start duraklat · Back harita${s.transmission === 'manual' ? ' · D-pad ↑/↓ vites' : ''}</td></tr>
+<tr><th colspan="4">${dev === 'keyboard' ? 'Kontrolcü' : dev === 'playstation' ? 'PlayStation' : dev === 'wheel' ? 'Direksiyon seti' : 'Xbox'}</th></tr>
+<tr><td colspan="4">${dev === 'keyboard' ? `Sol çubuk direksiyon · RT gaz · LT fren · B el freni · LB/RB sinyal · Sağ çubuk ayna ve omuz · sağ çubuk yukarı veya aşağı iç dikiz · Y kamera · X dörtlü · A korna · R3 hız sabitleyici · Menu duraklat · View harita${s.transmission === 'manual' ? ' · D-pad ↑/↓ vites' : ''}. Kontrolcüye geçince bu tablo o aygıtın tuşlarına döner.` : 'Bu tablo şu an kullanılan aygıtın tuşlarını gösterir. Klavyeye geçince harfler geri gelir.'}</td></tr>
 </tbody></table>`;
 }
 
@@ -935,7 +952,7 @@ function helpHtml(): string {
 <div class="grid2">
 <div class="card"><h3>Amaç</h3><p>Sürüş Koçu, gerçek trafik kurallarına yakın bir şehirde <b>güvenli ve dikkatli sürüş alışkanlıklarını</b> ölçer. Her oturumun sonunda ayrıntılı bir rapor alırsın; profil oluşturduysan puanların <b>Sürücü Karnesi</b>'ne işlenir.</p>
 <ol><li><b>Kalibrasyon Programı</b> ile başla: kişisel sürüş stilin çıkarılır.</li><li><b>Beceri</b> görevleriyle zayıf yönlerini çalış (park, MSM, tepki).</li><li><b>Şehir</b>de serbest sür, görev panosundan (J) görev seç.</li></ol></div>
-<div class="card"><h3>Ayna → Sinyal → Manevra</h3><p>Şerit değiştirirken ve dönerken güvenli sıra:</p><ol><li>İç dikiz + ilgili yan ayna (<kbd>X</kbd>, <kbd>Z</kbd>/<kbd>C</kbd>)</li><li>Sinyal (<kbd>Q</kbd>/<kbd>E</kbd>) — en az 1–3 sn önce</li><li>Kör nokta: omuz kontrolü (<kbd>Shift</kbd>+<kbd>Z</kbd>/<kbd>C</kbd>)</li><li>Manevra, sonra sinyali kapat</li></ol><p class="muted small">Dönüşlerde sinyal direksiyon düzelince kendiliğinden kapanır; şerit değişiminde kapatmak sana kalır.</p></div>
+<div class="card"><h3>Ayna → Sinyal → Manevra</h3><p>Şerit değiştirirken ve dönerken güvenli sıra:</p><ol><li>İç dikiz + ilgili yan ayna (${promptHtml('mirrorRear')}, ${promptHtml('mirrorL')}/${promptHtml('mirrorR')})</li><li>Sinyal (${promptHtml('signalL')}/${promptHtml('signalR')}) — en az 1–3 sn önce</li><li>Kör nokta: omuz kontrolü (${promptHtml('shoulder')} + ${promptHtml('mirrorL')}/${promptHtml('mirrorR')})</li><li>Manevra, sonra sinyali kapat</li></ol><p class="muted small">Dönüşlerde sinyal direksiyon düzelince kendiliğinden kapanır; şerit değişiminde kapatmak sana kalır.</p></div>
 <div class="card"><h3>Puanlama</h3><p>5 bileşen: <b>Güvenli sürüş %30</b> (çarpışma, ramak kala/TTC, takip mesafesi, ani manevralar, tepki) · <b>Kural %25</b> (hız, ışık, DUR, öncelik, yaya, sinyal, yön) · <b>Gözlem %20</b> (manevra öncesi ayna, omuz, ayna sıklığı, kavşak taraması) · <b>Araç hâkimiyeti %15</b> (jerk, konfor, direksiyon yön değiştirme) · <b>Görev & güzergâh %10</b>.</p><p>Ağır ihlaller toplam puana tavan koyar (ör. kırmızı ışık 72, ağır kaza 40, yayaya çarpma 20).</p></div>
 <div class="card"><h3>Trafik kuralları</h3><ul><li>Hız sınırları bölgeye göre değişir: sokak 30, cadde 50, şehir merkezi 40, okul/hastane/park çevresi 30, yaya öncelikli çarşı 20, bulvar 60–70, şehir dışı yollar 90, bölünmüş çevre yolu 110 (kavşak yaklaşımı 70, virajlar 90).</li><li>Bölünmüş yolda sağdan gidin, sollamayı soldan yapıp sağa dönün; emniyet şeridinde gidilmez, sağdan sollama yapılmaz.</li><li>Dönel kavşakta içerideki araç önceliklidir; çıkarken sağ sinyal verin.</li><li>Kavşağa yaklaşırken düz (kesintisiz) çizgide şerit değiştirilmez.</li><li>Sirenli ambulans/polis gelince sağa yanaşıp yavaşlayın.</li><li>Hastane ve okul bölgesinde korna çalınmaz.</li><li>Kırmızı ve kırmızı+sarıda geçilmez; sarıda güvenle durabiliyorsan dur.</li><li>DUR levhasında tam dur (0 km/h), yol ver levhasında ana yola öncelik ver.</li><li>Tek yönlü yollara girilmez levhasından girme.</li><li>Yaya geçidinde yayaya yol ver.</li><li>Takip mesafesi en az 2 sn (yağmurda 4 sn).</li><li>Gece ve yağmurda farlar açık.</li></ul></div>
 </div>

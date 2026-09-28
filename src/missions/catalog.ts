@@ -1,5 +1,5 @@
 import { angleDiff, mulberry32 } from '../core/math';
-import { actionKeys } from '../input/bindings';
+
 import type { Lane } from '../world/roadNetwork';
 import type { Constraint, MissionDef, MissionHost, Step, StepCtx } from './mission';
 
@@ -54,7 +54,7 @@ export function driveToLandmark(h: MissionHost, id: string, title?: string, opts
 export function reachSpeed(kmh: number, title?: string): Step {
   return {
     title: title ?? `${kmh} km/h hıza çık`,
-    hint: 'Gaza kademeli basın (W / sağ tetik). Sert hızlanmadan kaçının.',
+    hint: 'Gaza kademeli basın ({throttle}). Sert hızlanmadan kaçının.',
     update(h) {
       return h.player().kmh >= kmh ? 'done' : null;
     },
@@ -64,7 +64,7 @@ export function reachSpeed(kmh: number, title?: string): Step {
 export function turn(side: 'left' | 'right', title: string, target?: { x: number; z: number; name: string }): Step {
   return {
     title,
-    hint: `Ayna (${side === 'left' ? 'Z' : 'C'}) → Sinyal (${side === 'left' ? 'Q' : 'E'}) → yavaşla → dön. Dönüş için doğru şeritte olun.`,
+    hint: `Ayna ({${side === 'left' ? 'mirrorL' : 'mirrorR'}}) → Sinyal ({${side === 'left' ? 'signalL' : 'signalR'}}) → yavaşla → dön. Dönüş için doğru şeritte olun.`,
     start(h, c) {
       c.data.t0 = h.time();
       if (target) h.navigate(target.x, target.z, target.name);
@@ -91,7 +91,7 @@ export function laneChange(side: 'left' | 'right' | 'any', title: string): Step 
   let res = '';
   return {
     title,
-    hint: `Önce ayna (${actionKeys('mirrorL')}/${actionKeys('mirrorR')}), sonra sinyal (${actionKeys('signalL')}/${actionKeys('signalR')}), omuz kontrolü (${actionKeys('shoulder')} + ayna tuşu), sonra yavaşça şerit değiştirin.`,
+    hint: 'Önce ayna ({mirrorL}/{mirrorR}), sonra sinyal ({signalL}/{signalR}), omuz kontrolü ({shoulder} + ayna), sonra yavaşça şerit değiştirin.',
     start(h, c) {
       c.data.t0 = h.time();
       c.data.lane0 = h.player().lane;

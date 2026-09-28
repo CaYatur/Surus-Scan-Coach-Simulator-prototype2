@@ -289,14 +289,15 @@ export function buildGantry(B: RoadBuild, e: RoadEdge, sEdge: number, side: 1 | 
   const outer = e.halfWidth + 0.8;
   const metal = B.ctx.b.metal;
   metal.setColor('#8b949b');
-  const pIn = ep(e, sEdge, side * 0.9, 0);
+  // Inner leg rises from the median barrier, not from the inner shoulder.
+  const pIn = ep(e, sEdge, 0, 0);
   const pOut = ep(e, sEdge, side * outer, 0);
   for (const p of [pIn, pOut]) {
     metal.cylinder(p.x, p.z, 0, 7.4, 0.2, 0.18, 10);
     B.colliders.add({ kind: 'circle', x: p.x, z: p.z, r: 0.3, tag: 'pole' });
   }
-  const mid = ep(e, sEdge, side * (0.9 + outer) / 2, 0);
-  const beamLen = outer - 0.9;
+  const mid = ep(e, sEdge, (side * outer) / 2, 0);
+  const beamLen = outer;
   const rot = Math.atan2(e.rx, e.rz);
   metal.orientedBox(mid.x, 7.1, mid.z, 0.25, 0.25, beamLen, rot);
   metal.orientedBox(mid.x, 6.3, mid.z, 0.18, 0.18, beamLen, rot);

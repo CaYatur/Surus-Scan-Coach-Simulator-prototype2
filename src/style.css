@@ -59,6 +59,50 @@ kbd {
   font: 600 12px var(--font);
   text-align: center;
 }
+kbd.pad {
+  min-width: 1.7em;
+  padding: 1px 7px;
+  border-radius: 7px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  vertical-align: baseline;
+}
+kbd.pad.face-a,
+kbd.pad.face-b,
+kbd.pad.face-x,
+kbd.pad.face-y {
+  border-radius: 999px;
+  color: #fff;
+}
+kbd.pad.xb.face-a { background: #107c10; border-color: #0b5c0b; }
+kbd.pad.xb.face-b { background: #d02323; border-color: #8e1212; }
+kbd.pad.xb.face-x { background: #1070d0; border-color: #084e96; }
+kbd.pad.xb.face-y { background: #e6a100; border-color: #a87400; color: #1a1400; }
+kbd.pad.ps.face-a { background: #5b8def; border-color: #2f5fba; }
+kbd.pad.ps.face-b { background: #e23b4a; border-color: #a11e2b; }
+kbd.pad.ps.face-x { background: #c45ad4; border-color: #8a3499; }
+kbd.pad.ps.face-y { background: #2eaf62; border-color: #1c7a42; }
+kbd.pad.trig,
+kbd.pad.bump,
+kbd.pad.stick,
+kbd.pad.dpad,
+kbd.pad.sys,
+kbd.pad.pedal,
+kbd.pad.wheel,
+kbd.pad.wh.face-a,
+kbd.pad.wh.face-b,
+kbd.pad.wh.face-x,
+kbd.pad.wh.face-y {
+  background: #243041;
+  color: #e7eef8;
+  border-color: #415068;
+  border-radius: 7px;
+}
+.hint-bar kbd {
+  font-size: 10px;
+  padding: 0 5px;
+  color: #d5deea;
+}
 
 /* ———————————————— buttons & controls ———————————————— */
 .btn {
@@ -1071,6 +1115,130 @@ input[type='range'] {
   line-height: 1.55;
   font-size: 14px;
 }
+.detail-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.detail-toggle b {
+  display: block;
+  font-size: 15px;
+}
+.detail-toggle small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.detail-toggle i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg);
+  transition: transform 0.15s ease;
+}
+.detail-fold.open .detail-toggle i {
+  transform: rotate(-135deg);
+}
+.detail-extra {
+  display: none;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.detail-fold.open .detail-extra {
+  display: block;
+}
+.cat-notes {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+}
+.cat-notes h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.cat-notes .tips,
+.cat-notes .muted {
+  font-size: 13px;
+}
+.metric-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 2px;
+}
+.metric-head h3 {
+  margin: 0;
+}
+.metric-head b {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+.insight-head {
+  margin: 6px 2px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.metric-row {
+  cursor: pointer;
+  border-radius: 8px;
+}
+.metric-row:hover .bar-row,
+.metric-row:focus-visible .bar-row {
+  background: rgba(255, 255, 255, 0.03);
+}
+.metric-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+.metric-row .br-l b::after {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 8px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(-45deg);
+  vertical-align: 2px;
+}
+.metric-row.open .br-l b::after {
+  border-color: var(--accent);
+  transform: rotate(45deg);
+  vertical-align: 0;
+}
+.metric-advice {
+  display: none;
+  margin: 0 0 8px 2px;
+  padding: 0 0 2px 12px;
+  border-left: 2px solid var(--line);
+}
+.metric-advice p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.metric-row.open .metric-advice {
+  display: block;
+}
 .objs-r {
   list-style: none;
   padding: 0;
@@ -1773,7 +1941,8 @@ input[type='range'] {
   }
   .grid-setup,
   .grid2,
-  .karne-top {
+  .karne-top,
+  .cat-notes {
     grid-template-columns: 1fr;
   }
   .tiles {

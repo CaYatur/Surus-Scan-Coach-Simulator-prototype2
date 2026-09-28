@@ -1,4 +1,5 @@
 import { el, esc, scoreColor } from './dom';
+import { promptPlain } from '../input/prompts';
 import { formatDistance, formatTime } from '../core/math';
 import { COMPONENTS, COMPONENT_META, type CoachEvent, type Component } from '../coach/types';
 import type { ObjectiveView } from '../missions/mission';
@@ -140,15 +141,19 @@ export class Hud {
     this.indR.classList.toggle('on', s.sigR && s.blink);
     this.indL.classList.toggle('armed', s.sigL);
     this.indR.classList.toggle('armed', s.sigR);
+    const key = (a: Parameters<typeof promptPlain>[0]) => {
+      const t = promptPlain(a);
+      return t === '—' ? '' : ` (${t})`;
+    };
     this.icons.innerHTML =
-      `<span class="ti ${s.lights ? 'on-blue' : ''}" title="Farlar (L)">◐</span>` +
-      `<span class="ti ${s.handbrake ? 'on-red' : ''}" title="El freni">(P)</span>` +
-      `<span class="ti ${s.wipers ? 'on-green' : ''}" title="Silecek (I)">⌇</span>` +
-      (s.cruise ? `<span class="ti on-green" title="Hız sabitleyici (K)">⏲ ${s.cruise}</span>` : '') +
+      `<span class="ti ${s.lights ? 'on-blue' : ''}" title="Farlar${key('lights')}">◐</span>` +
+      `<span class="ti ${s.handbrake ? 'on-red' : ''}" title="El freni${key('handbrake')}">P</span>` +
+      `<span class="ti ${s.wipers ? 'on-green' : ''}" title="Silecek${key('wipers')}">⌇</span>` +
+      (s.cruise ? `<span class="ti on-green" title="Hız sabitleyici${key('cruise')}">⏲ ${s.cruise}</span>` : '') +
       (s.engineOff ? `<span class="ti on-red" title="Motor durdu">MOTOR</span>` : '') +
       (s.abs === false ? `<span class="ti" title="ABS kapalı">ABS✕</span>` : '') +
-      (s.clutch != null && s.clutch > 0.1 ? `<span class="ti on-blue" title="Debriyaj">D ${Math.round(s.clutch * 100)}%</span>` : '') +
-      `<span class="ti cam" title="Kamera (V)">🎥 ${esc(s.cam)}</span>`;
+      (s.clutch != null && s.clutch > 0.1 ? `<span class="ti on-blue" title="Debriyaj${key('clutch')}">D ${Math.round(s.clutch * 100)}%</span>` : '') +
+      `<span class="ti cam" title="Kamera${key('camera')}">🎥 ${esc(s.cam)}</span>`;
   }
 
   /** Bottom hint line (built from the current key bindings). */
@@ -259,7 +264,8 @@ export class Hud {
     }
     const since = s.sinceAny;
     const tone = since < 10 ? 'good' : since < 20 ? 'warn' : 'bad';
-    this.scanText.innerHTML = `<span class="${tone}">Son ayna: ${since > 900 ? '—' : Math.round(since) + ' sn'}</span><small>Z sol · X dikiz · C sağ</small>`;
+    const cap = (a: Parameters<typeof promptPlain>[0]) => promptPlain(a);
+    this.scanText.innerHTML = `<span class="${tone}">Son ayna: ${since > 900 ? '—' : Math.round(since) + ' sn'}</span><small>${esc(cap('mirrorL'))} sol · ${esc(cap('mirrorRear'))} dikiz · ${esc(cap('mirrorR'))} sağ</small>`;
   }
 
   crash(strength: number) {

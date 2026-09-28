@@ -659,7 +659,7 @@ export class AITraffic {
       const c = this.cars[i];
       const d = Math.hypot(c.x - player.x, c.z - player.z);
       const sirenDone = c.siren && (c.sirenT > 110 || d > 420);
-      if (d > despawnR + (c.siren ? 250 : 0) || (c.stuck > 50 && d > 60) || (c.crashed > 0 && c.crashed < 0.01 && d > 60) || (sirenDone && d > 150)) {
+      if (d > despawnR + (c.siren ? 250 : 0) || (c.stuck > 50 && d > 60) || (sirenDone && d > 150)) {
         this.trailerColors.delete(c.id);
         this.cars.splice(i, 1);
       }
@@ -676,13 +676,20 @@ export class AITraffic {
 
     for (const c of this.cars) {
       if (c.crashed > 0) {
-        c.crashed = Math.max(0.001, c.crashed - dt);
-        c.v = Math.max(0, c.v - 8 * dt);
-        c.hazard = true;
-        c.brake = true;
-        c.s += c.v * dt;
-        this.advance(c);
-        continue;
+        c.crashed -= dt;
+        if (c.crashed > 0) {
+          c.v = Math.max(0, c.v - 8 * dt);
+          c.hazard = true;
+          c.brake = true;
+          c.s += c.v * dt;
+          this.advance(c);
+          continue;
+        }
+        // Pause over: hazards off, back into normal following.
+        c.crashed = 0;
+        c.hazard = false;
+        c.brake = false;
+        c.stuck = 0;
       }
       if (c.siren) c.sirenT += dt;
       c.lcCooldown -= dt;
@@ -820,9 +827,9 @@ export class AITraffic {
     this.place(c);
   }
 
-  /** Mark a car as crashed (stops with hazards). */
+  /** Mark a car as crashed. It stops with hazards, then drives on after a few seconds. */
   crash(c: AICar) {
-    c.crashed = 25;
+    c.crashed = 5;
     c.scriptBrake = 0;
     c.siren = false;
   }
@@ -840,7 +847,6 @@ export class AITraffic {
     }
     const list = this.visuals;
     list.length = 0;
-    for (const p of this.parkedVisible) list.push(p);
     const flash = Math.floor(this.time * 6) % 2 === 0 ? 1 : 2;
     for (const c of this.cars) {
       const hz = c.hazard && blink;
@@ -861,6 +867,7 @@ export class AITraffic {
       }
       list.push({ ...base, type: c.type, x: c.x, z: c.z, heading: c.heading });
     }
+    for (const p of this.parkedVisible) list.push(p);
     this.renderer.draw(list);
   }
 

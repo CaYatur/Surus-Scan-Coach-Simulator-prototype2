@@ -285,8 +285,6 @@ export class VehicleDynamics {
       const tq = this.torque(this.rpm) * drive;
       // 0.62 lumps drivetrain losses, rotating inertia and tyre slip into one realistic factor
       force = (tq * ratio * p.finalDrive * 0.88 * 0.62) / p.wheelRadius;
-      // creep (automatic idle roll) when no pedal
-      if (drive < 0.02 && brake < 0.02 && absV < 1.6 && !this.handbrakeOn && this.gearMode !== 'N') force += p.mass * 0.9;
       // traction limit (front-wheel drive ≈ 60 % load)
       const tract = mu * p.mass * G * 0.62;
       if (force > tract) {
@@ -337,9 +335,8 @@ export class VehicleDynamics {
       if (c.brake > 0.3 && absV < 2.5 && c.throttle < 0.05) k = 0; // clutch in when stopping
     } else k = clamp((1 - c.clutch) * 1.35, 0, 1); // bites before the pedal is fully up
     this.clutchEngage = k;
-    let drive = this.engineOn ? c.throttle : 0;
-    // idle governor keeps the engine alive (adds a little throttle when rpm drops)
-    if (this.engineOn) drive = Math.max(drive, clamp((p.idleRpm - this.rpm) / 450, 0, 0.35));
+    // Wheel torque follows the pedal only. Idle rpm is held by the governor below, so the car does not creep.
+    const pedal = this.engineOn ? c.throttle : 0;
     const free = p.idleRpm + c.throttle * (p.redline * 0.92 - p.idleRpm);
     let target: number;
     if (!this.engineOn) target = 0;
@@ -365,7 +362,7 @@ export class VehicleDynamics {
 
     let force = 0;
     if (ratio > 0 && this.engineOn && k > 0) {
-      const tq = this.torque(Math.max(this.rpm, p.idleRpm)) * drive;
+      const tq = this.torque(Math.max(this.rpm, p.idleRpm)) * pedal;
       // a slipping clutch already passes most of the engine torque once it bites
       const kT = coupled < this.rpm - 150 ? Math.min(1, k * 2.2) : k;
       force = (tq * ratio * p.finalDrive * 0.88 * 0.62 * kT) / p.wheelRadius;
@@ -394,7 +391,12 @@ export class VehicleDynamics {
     // Without ABS a panic stop locks the wheels: less deceleration and almost no steering
     this.wheelLock = !opts.abs && demand > mu * G * 0.97 && absV > 2;
     if (this.wheelLock) brakeDecel = mu * G * 0.78;
-    if (this.handbrakeOn) brakeDecel = Math.max(brakeDecel, mu * G * 0.45);
+    // Parking brake locks the rear wheels. It must stop the car and hold it,
+    // even if the driver is still on the throttle. The engine only drags against it.
+    if (this.handbrakeOn) {
+      force *= 0.18;
+      brakeDecel = Math.max(brakeDecel, mu * G * 0.7);
+    }
     const resist = p.dragCoef * this.speed * this.speed + p.rollRes * p.mass * G;
     const decel = brakeDecel + resist / p.mass;
     const aDrive = force / p.mass;
@@ -404,6 +406,9 @@ export class VehicleDynamics {
     if (v > 0) v = Math.max(0, v - decel * dt);
     else if (v < 0) v = Math.min(0, v + decel * dt);
     if (this.gearMode === 'P') v = approach(v, 0, 8 * dt);
+    // No drive torque and nearly stopped: stay stopped instead of inching along the last heading.
+    if (Math.abs(force) < 40 && Math.abs(v) < 0.35) v = 0;
+    if (this.handbrakeOn && Math.abs(v) < 0.5) v = 0;
     this.speed = clamp(v, -12, 60);
     this.accel = (this.speed - prev) / Math.max(dt, 1e-4);
 

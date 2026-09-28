@@ -10,8 +10,25 @@ export type SubMetric = {
   score: number | null;
   value: string;
   detail: string;
+  /** One-line coach sentence shown in the category list. */
+  tip: string;
+  /** Longer advice opened when the metric is selected. */
+  advice: string;
   /** Weight inside its component. */
   w: number;
+};
+
+/** Diagnostic scores shown in the detailed report. They do not enter the five-axis grade. */
+export type InsightId = 'yorgunluk' | 'agresif' | 'odak';
+
+export type Insight = {
+  id: InsightId;
+  title: string;
+  score: number | null;
+  color: string;
+  tip: string;
+  note: string;
+  rows: Omit<SubMetric, 'component'>[];
 };
 
 export type RiskLevel = 'Düşük' | 'Orta' | 'Yüksek' | 'Kritik';
@@ -44,6 +61,8 @@ export type SessionResult = {
   risk: RiskLevel;
   tips: string[];
   strengths: string[];
+  /** Fatigue, aggression and focus readings. Not part of the weighted overall. */
+  insights: Insight[];
   style: StyleBaseline;
   styleAdherence: number | null;
   distanceKm: number;
@@ -170,7 +189,7 @@ export function computeSession(inp: ScoreInput): SessionResult {
   const perKm = (n: number) => n / Math.max(0.4, km);
   const subs: SubMetric[] = [];
   const add = (id: string, component: Component, name: string, score: number | null, value: string, detail: string, w = 1) =>
-    subs.push({ id, component, name, score: score == null ? null : Math.round(clamp(score, 0, 100)), value, detail, w });
+    subs.push({ id, component, name, score: score == null ? null : Math.round(clamp(score, 0, 100)), value, detail, tip: detail, advice: detail, w });
 
   const moving = samples.filter((s) => s.kmh > 3);
   const movingTime = Math.max(1, st.movingTime);
@@ -353,9 +372,87 @@ export function computeSession(inp: ScoreInput): SessionResult {
     zone_rules: 'Okul ve hastane bölgesinde 30, çarşıda 20 km/h sınırına uyun; bu bölgelerde korna çalmayın.',
     emergency: 'Sireni duyduğunuzda aynaya bakın, sağa yanaşın ve geçmesine izin verin.',
     lane_keeping: 'Bakışınızı uzağa, şeridin ortasına yöneltin; direksiyona küçük ve yumuşak düzeltmeler yapın.',
+    fat_lane: 'Şerit içinde gezinme artıyorsa mola verin; bakışı uzağa alıp şeridin ortasını hedefleyin.',
+    fat_srr: 'Direksiyon düzeltmeleri sıklaştıysa tempo düşün ve 15–20 dakikada bir kısa mola planlayın.',
+    fat_speed: 'Hızınız dalgalanıyorsa seyir kontrolünü erken kurun; yorgunlukta gaz ayağı kararsızlaşır.',
+    fat_reaction: 'Tepki uzadıysa takip mesafesini açın ve sürüşü bölün; 1 saniyenin üstü gecikme işaretidir.',
+    fat_scan: 'Ayna araları uzadıysa her 5–8 saniyede bir kısa dikiz bakışıyla ritmi geri kurun.',
+    fat_idle: 'Eller ve pedallar uzun süre susuyorsa dikkat dağılmıştır; oturuşu ve bakışı yenileyin.',
+    fat_time: 'Uzun süre aralıksız sürmeyin. 2 saat dolmadan, tercihen 90 dakikada bir mola verin.',
+    agg_speed: 'Sınırın üstünde gitmek en sık agresif davranış. Levha değişince gazı hemen bırakın.',
+    agg_harsh: 'Sert gaz, fren ve virajı azaltın: trafiği erken okuyup kademeli pedal kullanın.',
+    agg_tail: 'Öndeki araca yapışmayın. 2 saniye kuralı agresif takibin panzehiridir.',
+    agg_weave: 'Şerit değişimini seyrek ve sinyalli yapın; zikzak hem kural hem risk puanını düşürür.',
+    agg_miss: 'Ramak kala olayında hızı kesin ve mesafeyi açın; TTC 2 saniyenin altına inmesin.',
+    agg_hostility: 'Kırmızı, korna ve yol vermeme “acele”nin değil ihlalin işaretidir. Bir ışık bekleyin.',
+    foc_mirror: 'Odak, yola kilitlenmek değildir. Her 5–8 saniyede bir aynayı tarayın.',
+    foc_gap: 'Uzun bakışsız aralar zihnin yoldan koptuğunu gösterir. Arayı 15 saniyenin altında tutun.',
+    foc_junction: 'Kavşakta sol-sağ-sol bakmadan girmeyin; bu, odağın dışarıda olduğunu kanıtlar.',
+    foc_before: 'Her manevradan önce ilgili aynaya bakın. Bakmadan yapılan iş, odak kaçırır.',
+    foc_reaction: 'Tehlikeyi geç görmek odağın daraldığını gösterir. Bakışı 10–15 sn ileriye taşıyın.',
+    foc_idle: 'Kontrollere uzun süre dokunmamak dalgınlıktır. Oturuşu ve pedal temasını tazeleyin.',
+    foc_shoulder: 'Şerit değiştirmeden önce kör noktaya bakın; omuz kontrolü aktif dikkatin parçasıdır.',
+    foc_lane: 'Şerit ortasından kaymak, bakışın içeri döndüğünün araçtaki karşılığıdır.',
   };
+  const ADVICE: Record<string, string> = {
+    collisions: 'Çarpışma puanı, araç, nesne ve yaya temaslarını ayrı ayrı sayar; yaya teması tek başına puanı tabana çeker. Bir sonraki sürüşte hızı görüş mesafenize göre seçin ve öndeki aracı “bin bir, bin iki” ile takip edin. Dar sokakta aynayı ve omzu manevradan önce kullanın; çarpmadan kaçınmak fren gücünden çok erken fark etmektir.',
+    near_miss: 'TTC, öndeki araca mevcut hız farkıyla kaç saniyede çarpacağınızı söyler. 1,6 saniyenin altı “ramak kala” sayılır. Fren lambasını görür görmez gazı bırakın, mesafeyi 2 saniyenin üstüne çıkarın. Yağmurda eşiği daha erken, en az 4 saniye mesafe olarak düşünün.',
+    headway: 'Takip puanı, bir aracı izlediğiniz sürenin ne kadarında 2 saniyenin üstünde kaldığınızı ölçer; 1 saniyenin altı ayrıca cezalandırılır. Öndeki araç bir direği geçince “bin bir, bin iki” deyin, siz o direğe daha erken varmayın. Islak zeminde aynı sayımı dörde çıkarın.',
+    hard_events: 'Sert fren, sert gaz ve sert viraj kilometreye bölünür; kısa yolda tek bir panik freni puanı olduğundan fazla düşürmesin diye. Trafiği 10–15 saniye ileriden okuyun, duracağınız yeri erken seçin ve pedala kademeli yük bindirin. Viraja girmeden yavaşlayın, virajın içinde frene asılmayın.',
+    reaction: 'Tepki süresi, uyarı ile frene gidiş arasındaki zamandır. 0,7–1,0 sn iyi bir aralıktır; 1,2 sn üstü gecikme sayılır. Bakışı kaputun hemen önünden kaldırıp yolun ilerisine taşıyın. Yorgunsanız mesafe açmak, refleks beklemekten daha güvenlidir.',
+    speed: 'Puan, hareket sürenizin ne kadarında toleranslı sınırın içinde kaldığınıza bakar. Okul, hastane ve çarşıda tolerans yalnızca 3 km/h’tır. Levha veya bölge değişince gazı hemen bırakın; “biraz üstü” bu ölçümde birikimli süre olarak yazılır.',
+    red_light: 'Kırmızıda geçiş ağır ihlaldir ve toplam nota tavan koyar. Sarı yandığında durma mesafeniz yetiyorsa durun; yetmiyorsa ve çizgiyi güvenle geçemeyecekseniz de durmayı seçin. Işığı kavşağa 50–80 m kala okumaya başlayın.',
+    stop_sign: 'DUR levhasında tekerlekler tam olarak durmalıdır; yavaşlayıp akmak “tam duruş” sayılmaz. Durun, sola bakın, sağa bakın, tekrar sola bakın, sonra kalkın. Eğimli yerde durduktan sonra geri kaymamak için freni kalkışa kadar tutun.',
+    right_of_way: 'Geçiş hakkı hem ana yol aracına hem de yaya geçidine bakar. Yaya adımını attıysa veya geçide yaklaşıyorsa durun. Ana yola çıkarken boşluk 2 saniyeden kısaysa bekleyin; “sıkışırsam frenler” diye girmeyin.',
+    signals: 'Dönüş ve şerit değişimlerinin kaçında sinyal yandığını ölçer. Sinyali en az 3 saniye önce, manevra bitince kapatın. Yanlış yöne sinyal, hiç sinyal vermemekten ayrıca puan kırar.',
+    lane_discipline: 'Ters yön süresi, kaldırım, refüj, yanlış şeritten dönüş, şerit çizgisinde seyir ve düz çizgide şerit değiştirme burada toplanır. Şeridin ortasını hedefleyin, tek yön levhasını kavşaktan önce okuyun. Düz çizgi kesiksizse şerit değiştirmeyin.',
+    lights: 'Gece ve görüşün düştüğü yağışta far kapalı geçen süre puanı düşürür. Alacakaranlıkta da kısa far açın (L). Karşıdan gelen varsa uzun fara geçmeyin.',
+    mirror_before: 'Şerit değişimi ve dönüşten önceki 6 saniyede ilgili aynaya bakılıp bakılmadığına bakar. Sıra sabittir: ayna, sinyal, manevra. Sol için Z, sağ için C, iç dikiz için X.',
+    shoulder: 'Ayna kör noktayı göstermez. Şerit değiştirmeden hemen önce omzunuzun üstünden (Shift+Z / Shift+C) bakın. Bakış kısa olsun; başı yolda tutun.',
+    mirror_rate: 'Hareket halinde dakikadaki ayna bakışı ve en uzun bakışsız ara birlikte değerlendirilir. Hedef her 5–8 saniyede bir kısa dikiz bakışıdır. 30 saniyeyi geçen ara, ritmin koptuğunu gösterir.',
+    junction_scan: 'DUR ve yol ver kavşaklarında girmeden önce sol-sağ bakışı sayılır. Sıra: sola, sağa, tekrar sola. Taramadan kalkış, “yol boştur” varsayımıdır.',
+    attention: 'Uzun süre direksiyon, gaz veya frende anlamlı hareket olmaması bir dikkat vekilidir; göz takibi değildir. Ara uzarsa oturuşu değiştirin, aynaya bakın, hızı bilinçli sabitleyin.',
+    jerk: 'Jerk, ivmenin ne kadar ani değiştiğidir. Düşük RMS, gazdan frene yumuşak geçiş demektir. Ayağınızı gazdan erken çekin, frene bir anda değil kademeyle basın, duruşun sonunda pedalı biraz bırakın.',
+    long_comfort: 'Hızlanma ve yavaşlamanın 0,25 g (yaklaşık 2,5 m/s²) altında kaldığı süreyi ölçer. Duruşu erken başlatın. Kalkışta gazı sonuna kadar değil, araç akana kadar açın.',
+    lat_comfort: 'Virajda 0,25 g üstü yanal ivme yolcuyu yatırır ve lastik payını yer. Virajdan önce yavaşlayın, içinde sabit ve hafif gaz tutun. Direksiyonu tek harekette sonuna kadar kırmayın.',
+    srr: 'Direksiyon yön değiştirme oranı, dakikada kaç kez belirgin yön değiştirdiğinizdir. Çok yüksek oran kararsız düzeltme veya yorgunluk belirtisi olabilir. Bakışı uzağa alın; küçük, yavaş düzeltmeler yeter.',
+    speed_stability: 'Kavşak dışında, 20 km/h üstündeki hızın değişkenlik katsayısıdır. Düz yolda gereksiz gaz-fren dalgası hem konforu hem odağı bozar. Bir hedef hız seçip onu koruyun.',
+    objectives: 'Seçilen görevin adımlarının kaçı bittiğine bakar. Başarısız adım ayrıca kırar. Yönergeyi sürüşten önce okuyun; navigasyon okuyla görevin istediği noktayı karıştırmayın.',
+    route: 'Navigasyon rotasından her sapma yeniden hesaplatır. Dönüşten 150 m önce talimatı okuyun ve doğru şeride erken geçin. Son anda kesişen dönüş hem rota hem sinyal puanını bozar.',
+    resets: 'Aracı sıfırlamak simülasyonda bir kurtarma tuşudur; gerçekte yoktur. Hata yaptıysanız durun, aynayı kontrol edin ve küçük bir geri manevrayla düzeltin.',
+    highway: 'Bölünmüş yolda sağ şerit esastır, sollama soldan yapılır ve bitince sağa dönülür. Emniyet şeridi seyir şeridi değildir. Sol şeritte araç yokken oturmak da puan kırar.',
+    roundabout: 'Ada içindeki araç önceliklidir. Girerken yol verin, çıkacağınız kolu görür görmez sağ sinyal verin. Sinyalsiz çıkış, arkadan gelenin sizi yanlış okumasına yol açar.',
+    zone_rules: 'Okul ve hastane çevresi 30, yaya öncelikli çarşı 20 km/h’tır; bu iki bölgede korna da yasaktır. Tabela değişince hızı hemen düşürün, korna yerine fren ve mesafe kullanın.',
+    emergency: 'Sirenli aracı duyunca önce aynaya bakın, sonra sağa yanaşıp yavaşlayın. Orta şeritte devam etmek “yol verdim” sayılmaz. Araç geçene kadar şeridinize dönmeyin.',
+    lane_keeping: 'Şerit ortasına göre yanal sapmanın RMS değeridir. 0,3 m civarı sakin bir tutuştur; 0,8 m üstü belirgin gezinmedir. Bakışı şeridin uzağına koyun, çizgiye değil ortaya hizalayın.',
+    fat_lane: 'Yorgunluk literatüründe şerit konumu sapması (SDLP) en çok kullanılan araç göstergesidir; NHTSA’nın uykululuk çalışması yaklaşık 1 m üstünü belirti sayar. Bu puan, şerit ortasına göre RMS sapmanızdan gelir. Sapma büyüyorsa hızı düşürün ve mola verin. Göz kapağı ölçümü olmadığı için bu, yorgunluğun kendisi değil belirtisidir.',
+    fat_srr: 'Direksiyon yön değiştirme oranı, uykululukla birlikte artan büyük düzeltmeleri yakalar (saha çalışmalarında yaklaşık 6° eşiği en duyarlı bulunan aralıktadır; burada yaklaşık 3° üstü dönüşler sayılır). Sık düzeltme, şeridi geç fark ettiğinizi gösterir. Düz yolda oran yükseliyorsa bakışı uzağa alın ve sürüşü bölün.',
+    fat_speed: 'Hızın standart sapması, alkol ve yorgunluk çalışmalarında şerit sapmasıyla birlikte bozulan ikinci uzun vadeli ölçüdür. Kavşak dışı seyirde hızınız bir inip bir çıkıyorsa gaz ayağı artık otomatik değildir. Bir seyir hızı seçin; tutamıyorsanız mola zamanı gelmiştir.',
+    fat_reaction: 'Uykululuk ve zihin dağınıklığı, ani olaya gidiş süresini uzatır. 0,9 saniyenin üstü bu ölçekte kırılmaya başlar. Tek bir yavaş tepki yorgunluk teşhisi değildir; mesafe açmak ve süreyi kısaltmak ise her zaman işe yarar.',
+    fat_scan: 'Yorulunca bakış yolun ortasına daralır, ayna taraması seyrekleşir. Dakikadaki ayna sayısı ve en uzun bakışsız ara bu daralmayı vekil olarak okur. Ritmi 5–8 saniyede bir kısa bakışa geri çekin. Bu bir göz izleyici değildir.',
+    fat_idle: 'Uzun girdi boşluğu, ellerin ve ayakların sürüşü bırakıp “akışa” geçtiği anları sayar. Düz yolda bir miktar sükunet normaldir; üst üste boşluklar ise uyanıklığın düştüğünü düşündürür. Boşluk hissedince aynaya bakın ve oturuşu değiştirin.',
+    fat_time: 'Süre tek başına yorgunluk değildir; zaman-görev etkisi ancak diğer belirtilerle birlikte anlam kazanır ve bu yüzden düşük ağırlıklıdır. Yaklaşık 15 dakikadan sonra puan yavaşça kırılır. 90 dakika dolmadan mola vermek, puanı kovalamaktan daha doğru bir kuraldır.',
+    agg_speed: 'NHTSA hızı ölümlü kazalardaki en büyük agresif davranış olarak sayar. Bu ölçüm, toleransın üstünde geçen süreye ve aşırı aşımın payına bakar. Levha düşünce gazı aynı anda bırakın. “Akışa uydum” gerekçesi süreyi silmez.',
+    agg_harsh: 'Telematik skorları sert gaz, sert fren ve sert virajı kilometreye böler; çünkü agresiflik bir olayın şiddeti kadar sıkılığıdır. Öndeki trafiği erken okuyup pedalı kademeli kullanın. Virajı frenle değil, girmeden önceki hızla çözer.',
+    agg_tail: 'AAA ve OSHA yakın takibi temel agresif davranış sayar; sigorta verisinde sert fren de çoğu zaman bunun gölgesidir. 1 saniyenin altındaki takip ayrıca ağır kırılır. “Bin bir, bin iki” bitmeden öndeki aracın geçtiği noktaya varmayın.',
+    agg_weave: 'Şeritler arasında sık geçiş ve zikzak, NHTSA’nın “tehlikeli şekilde araç kullanma” tanımına girer. Her değişim sinyalli, aynalı ve gerekli olsun. Kilometrede dörtten fazla şerit değişimi bu ölçekte “acele” olarak okunur.',
+    agg_miss: 'Düşük çarpma süresi, agresif mesafenin sonucudur. 1,6 saniye altı ramak kala sayılır; 2 saniyenin altı da puanı törpüler. Olaydan sonra hızı kesin, mesafeyi açın ve bir sonraki araca aynı hatayla yapışmayın.',
+    agg_hostility: 'Kırmızı ışık, yol vermeme, yasak yerde korna ve sağdan sollama, aceleciliğin kurallara çarptığı yerdir. Bunlar güvenlik ekseninde de durur; burada özellikle “diğer yol kullanıcısına yüklenen” davranış olarak okunur. Bir ışık veya bir korna, varış süresini değiştirmez.',
+    foc_mirror: 'Zihin dağınıklığında bakış yolun merkezine daralır ve ayna taraması düşer (He ve arkadaşları). Dakikada yaklaşık altı kısa bakış, bu simülasyondaki hedef ritmdir. Ayna, düşünceyi yola geri çağıran en kolay çapadır.',
+    foc_gap: 'En uzun bakışsız ara, odağın koptuğu en kötü pencereyi gösterir. 15 saniyeden sonra puan kırılır; 30 saniye ciddi bir boşluktur. Ara uzadığında iç dikize bir bakış yeter, başı yoldan çevirmeyin.',
+    foc_junction: 'Kavşak taraması, dikkatin dış dünyaya dönük olduğunu gösteren aktif bir iştir. Sol-sağ-sol bakmadan girilen her DUR veya yol ver, “gördüm sandım” hatalarının kaynağıdır. Durunca taramayı bitirmeden kalkmayın.',
+    foc_before: 'Manevra öncesi ayna, odağın niyetle birlikte hareket edip etmediğini ölçer. Şerit veya dönüşten önceki 6 saniyede bakılmadıysa o iş otomatik yapılmıştır. Sırayı sesli kurun: ayna, sinyal, manevra.',
+    foc_reaction: 'Zihin dağınıklığı ani olaya gecikmeli gider (Yanko ve Spalek). 0,75 saniyenin üstü bu odak ölçeğinde kırılmaya başlar. Bakışı kaputtan kaldırıp yolun 10–15 saniye ilerisine koyun; tehlike o zaman erken görünür.',
+    foc_idle: 'Uzun kontrol sessizliği, sürüşün bilinçli izlenmediği anların vekilidir. Klinik bir dikkat testi değildir. Boşluk hissedince pedala bilinçli bir düzeltme, aynaya bir bakış ve hızı bir kontrol yeter.',
+    foc_shoulder: 'Omuz bakışı, şerit değiştirirken dikkatin kör noktaya kadar genişlediğini gösterir. Ayna yetmez. Değişimden hemen önce kısa bir omuz bakışı (Shift+Z veya Shift+C) bu puanı ve gerçek güvenliği birlikte düzeltir.',
+    foc_lane: 'Şerit sapması odak için yalnızca yardımcı bir işarettir; bazı çalışmalarda dalgınlık sapmayı artırır, bazılarında azaltır. Bu yüzden ağırlığı düşüktür. Sapma varsa önce bakışın nereye gittiğini sorun, sonra direksiyonu değil bakışı düzeltin.',
+  };
+  for (const s of subs) {
+    s.tip = TIP[s.id] ?? s.detail;
+    s.advice = ADVICE[s.id] ?? s.tip;
+  }
   for (const s of weak) {
-    if (TIP[s.id]) tips.push(TIP[s.id]);
+    if (s.tip) tips.push(s.tip);
     if (tips.length >= 4) break;
   }
   if (!tips.length) tips.push('Harika bir sürüş! Gözlem alışkanlığını ve yumuşak sürüşü korumaya devam edin.');
@@ -364,6 +461,222 @@ export function computeSession(inp: ScoreInput): SessionResult {
     .sort((a, b) => b.w - a.w)
     .slice(0, 4)
     .map((s) => s.name);
+
+  const weigh = (rows: { score: number | null; w: number }[]) => {
+    let acc = 0;
+    let w = 0;
+    for (const r of rows) {
+      if (r.score == null) continue;
+      acc += r.score * r.w;
+      w += r.w;
+    }
+    return w > 0 ? Math.round(clamp(acc / w, 0, 100)) : null;
+  };
+  const insightRow = (id: string, name: string, score: number | null, value: string, detail: string, w: number) => ({
+    id,
+    name,
+    score: score == null ? null : Math.round(clamp(score, 0, 100)),
+    value,
+    detail,
+    tip: TIP[id] ?? detail,
+    advice: ADVICE[id] ?? TIP[id] ?? detail,
+    w,
+  });
+  const laneRms = st.laneKeepN > 400 ? Math.sqrt(st.laneKeepSq / st.laneKeepN) : null;
+  const reactionMean = st.reactionTimes.length ? mean(st.reactionTimes) : null;
+  const shortRead = inp.durationSec < 180;
+  const fatRows = [
+    insightRow(
+      'fat_lane',
+      'Şerit sapması (SDLP vekili)',
+      laneRms == null ? null : 100 - Math.max(0, laneRms - 0.22) * 90,
+      laneRms == null ? 'yeterli şerit verisi yok' : `RMS ${laneRms.toFixed(2)} m`,
+      'Şerit ortasına göre yanal sapma. Yaklaşık 1 m üstü belirgin belirtidir.',
+      2.2
+    ),
+    insightRow(
+      'fat_srr',
+      'Direksiyon düzeltme sıklığı',
+      srr > 0 ? 100 - Math.max(0, srr - 12) * 3.5 : null,
+      srr > 0 ? `${srr.toFixed(1)} /dk` : 'ölçülemedi',
+      'Yaklaşık 3° üstü yön değişimleri. Sık büyük düzeltme yorgunlukla birlikte artar.',
+      1.8
+    ),
+    insightRow(
+      'fat_speed',
+      'Hız dalgalanması',
+      cruise.length > 40 ? 100 - Math.max(0, cv - 0.08) * 200 : null,
+      cruise.length > 40 ? `değişim %${(cv * 100).toFixed(0)}` : 'düz seyir az',
+      'Kavşak dışı hızın değişkenlik katsayısı.',
+      1.3
+    ),
+    insightRow(
+      'fat_reaction',
+      'Tepki gecikmesi',
+      reactionMean == null ? null : 100 - Math.max(0, reactionMean - 0.9) * 60,
+      reactionMean == null ? 'ölçüm yok' : `${reactionMean.toFixed(2)} sn`,
+      'Uyarıdan frene kadar geçen süre. Uzama, uyanıklığın düştüğünü düşündürür.',
+      1.6
+    ),
+    insightRow(
+      'fat_scan',
+      'Tarama seyrelmesi',
+      movingTime > 40 ? clamp(inp.mirrorRate / 5, 0, 1) * 55 + clamp(1 - Math.max(0, inp.maxMirrorGap - 18) / 45, 0, 1) * 45 : null,
+      movingTime > 40 ? `${inp.mirrorRate.toFixed(1)} /dk · ara ${inp.maxMirrorGap.toFixed(0)} sn` : 'süre kısa',
+      'Ayna ritmi düşüp aralar uzadıkça bakış yola daralmış sayılır.',
+      1.5
+    ),
+    insightRow('fat_idle', 'Kontrol sessizliği', 100 - st.idleGaps * 16, `${st.idleGaps} uzun boşluk`, 'Eller ve pedallarda uzun hareketsizlik.', 1),
+    insightRow(
+      'fat_time',
+      'Süre (zaman-görev)',
+      inp.durationSec >= 480 ? 100 - Math.max(0, inp.durationSec / 60 - 15) * 3 : null,
+      `${Math.round(inp.durationSec / 60)} dk`,
+      'Tek başına teşhis değildir; 15 dakikadan sonra düşük ağırlıkla kırılır.',
+      0.5
+    ),
+  ];
+  const follow = st.followTime > 5;
+  const aggRows = [
+    insightRow(
+      'agg_speed',
+      'Hız baskısı',
+      100 - overFrac * 200 - (st.overSevereTime / movingTime) * 180,
+      `%${Math.round((1 - overFrac) * 100)} sınır içinde`,
+      'Tolerans üstü süre ve aşırı aşımın payı.',
+      2.2
+    ),
+    insightRow(
+      'agg_harsh',
+      'Sert gaz, fren ve viraj',
+      100 - ((st.hardBrake * 1.1 + st.hardAccel * 1.1 + st.harshCorner) / Math.max(0.4, km)) * 9,
+      `${st.hardBrake} fren · ${st.hardAccel} gaz · ${st.harshCorner} viraj / ${km.toFixed(1)} km`,
+      'Kilometreye bölünmüş sert kontrol olayları.',
+      2
+    ),
+    insightRow(
+      'agg_tail',
+      'Yakın takip',
+      follow ? 100 - (st.headwayBelow1 / st.followTime) * 140 - (st.headwayBelow2 / st.followTime) * 35 : null,
+      follow ? `1 sn altı %${Math.round((st.headwayBelow1 / st.followTime) * 100)} · min ${st.minHeadway.toFixed(1)} sn` : 'takip yok',
+      'İzleme süresinde 2 sn ve 1 sn kurallarının kırılması.',
+      1.8
+    ),
+    insightRow(
+      'agg_weave',
+      'Zikzak ve sık şerit',
+      100 - st.weaving * 16 - Math.max(0, st.laneChanges.total / Math.max(0.4, km) - 4) * 8,
+      `${st.weaving} zikzak · ${st.laneChanges.total} şerit değişimi`,
+      'Gereksiz şerit değişimi ve sık geçiş.',
+      1.2
+    ),
+    insightRow(
+      'agg_miss',
+      'Ramak kala',
+      100 - st.nearMiss * 20 - (isFinite(st.minTTC) && st.minTTC < 2 ? (2 - st.minTTC) * 15 : 0),
+      `${st.nearMiss} olay · min TTC ${isFinite(st.minTTC) ? st.minTTC.toFixed(1) + ' sn' : '—'}`,
+      'Çarpma süresinin kritik eşiğe inmesi.',
+      1.5
+    ),
+    insightRow(
+      'agg_hostility',
+      'Aceleci ihlaller',
+      100 - st.redLights * 30 - count('yield_fail') * 18 - st.hornViolations * 12 - st.rightOvertakes * 14,
+      `${st.redLights} kırmızı · ${count('yield_fail')} yol vermeme · ${st.hornViolations} korna · ${st.rightOvertakes} sağdan sollama`,
+      'Başkasına yüklenen kural ihlalleri.',
+      1.1
+    ),
+  ];
+  const manFocus = st.laneChanges.total + st.turns.total;
+  const focRows = [
+    insightRow(
+      'foc_mirror',
+      'Ayna ritmi',
+      movingTime > 30 ? clamp(inp.mirrorRate / 6, 0, 1) * 100 : null,
+      movingTime > 30 ? `${inp.mirrorRate.toFixed(1)} /dk` : 'süre kısa',
+      'Dakikada yaklaşık 6 kısa bakış hedef alınır.',
+      2
+    ),
+    insightRow(
+      'foc_gap',
+      'En uzun bakışsız ara',
+      movingTime > 30 ? 100 - Math.max(0, inp.maxMirrorGap - 15) * 1.8 : null,
+      movingTime > 30 ? `${inp.maxMirrorGap.toFixed(0)} sn` : 'süre kısa',
+      '15 saniyeden uzun aralar odağın koptuğu penceredir.',
+      1.6
+    ),
+    insightRow(
+      'foc_junction',
+      'Kavşak taraması',
+      st.junctionScans.total ? pct(st.junctionScans.ok, st.junctionScans.total) * 100 : null,
+      st.junctionScans.total ? `${st.junctionScans.ok}/${st.junctionScans.total}` : 'kavşak yok',
+      'DUR ve yol ver öncesi sol-sağ bakış.',
+      1.4
+    ),
+    insightRow(
+      'foc_before',
+      'Manevra öncesi ayna',
+      manFocus ? pct(st.laneChanges.mirror + st.turns.mirror, manFocus) * 100 : null,
+      manFocus ? `${st.laneChanges.mirror + st.turns.mirror}/${manFocus}` : 'manevra yok',
+      'Şerit ve dönüşten önceki 6 saniye.',
+      1.3
+    ),
+    insightRow(
+      'foc_reaction',
+      'Tehlikeye gidiş',
+      reactionMean == null ? null : 100 - Math.max(0, reactionMean - 0.75) * 65,
+      reactionMean == null ? 'ölçüm yok' : `${reactionMean.toFixed(2)} sn`,
+      'Ani olaya gecikme, bakışın daraldığını düşündürür.',
+      1.5
+    ),
+    insightRow('foc_idle', 'Dalgınlık boşluğu', 100 - st.idleGaps * 14, `${st.idleGaps} uzun boşluk`, 'Kontrol girdisinin kesildiği aralıklar.', 1.2),
+    insightRow(
+      'foc_shoulder',
+      'Kör nokta bakışı',
+      st.laneChanges.total ? pct(st.laneChanges.shoulder, st.laneChanges.total) * 100 : null,
+      st.laneChanges.total ? `${st.laneChanges.shoulder}/${st.laneChanges.total}` : 'şerit değişimi yok',
+      'Şerit değiştirmeden önceki omuz kontrolü.',
+      0.9
+    ),
+    insightRow(
+      'foc_lane',
+      'Şerit tutuşu (yardımcı)',
+      laneRms == null ? null : 100 - Math.max(0, laneRms - 0.28) * 70,
+      laneRms == null ? 'yeterli veri yok' : `RMS ${laneRms.toFixed(2)} m`,
+      'Düşük ağırlık. Dalgınlıkta sapma her çalışmada aynı yönde değişmez.',
+      0.7
+    ),
+  ];
+  const evidence = shortRead ? ' Kısa oturumda bu okuma ön göstergedir.' : '';
+  const insights: Insight[] = [
+    {
+      id: 'yorgunluk',
+      title: 'Yorgunluk belirtisi',
+      score: weigh(fatRows),
+      color: '#26c6da',
+      tip: `100, az belirti demektir. Şerit sapması, direksiyon düzeltmesi, hız dalgalanması, tepki ve tarama seyrelmesinden okunur.${evidence}`,
+      note: 'Göz kapağı (PERCLOS) ölçülmez. NHTSA araç-içi uykululuk çalışması ve direksiyon yön değiştirme araştırmalarına göre şerit sapması ile sık düzeltme esas alındı.',
+      rows: fatRows,
+    },
+    {
+      id: 'agresif',
+      title: 'Agresif sürüş',
+      score: weigh(aggRows),
+      color: '#ff7043',
+      tip: `100, sakin sürüş demektir. Hız baskısı, sert kontrol, yakın takip, zikzak ve aceleci ihlallerden okunur.${evidence}`,
+      note: 'NHTSA ve AAA agresif sürüşü hız, yakın takip, zikzak, ani hız değişimi ve kuralları hiçe sayma olarak tanımlar. Telematik skorları gibi olaylar kilometreye bölünür.',
+      rows: aggRows,
+    },
+    {
+      id: 'odak',
+      title: 'Odak puanı',
+      score: weigh(focRows),
+      color: '#7e57c2',
+      tip: `100, sürüşe dönük dikkat demektir. Ayna ritmi, bakışsız ara, kavşak taraması, manevra öncesi bakış ve tepki süresinden okunur.${evidence}`,
+      note: 'Zihin dağınıklığı çalışmalarında bakışın yola daralması, ayna taramasının düşmesi ve tepkinin uzaması birlikte görülür. Göz izleyici olmadığı için tarama tuşları ve kafa takibi vekil olarak kullanılır.',
+      rows: focRows,
+    },
+  ];
 
   const style = computeStyle(samples, st, inp.signalLeads, inp.mirrorRate);
   const kmhs = moving.map((s) => s.kmh);
@@ -376,6 +689,7 @@ export function computeSession(inp: ScoreInput): SessionResult {
     risk,
     tips,
     strengths,
+    insights,
     style,
     styleAdherence: inp.baseline ? styleAdherence(inp.baseline, style) : null,
     distanceKm: km,

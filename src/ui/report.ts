@@ -177,15 +177,67 @@ export function renderReport(host: HTMLElement, d: ReportData, map: MapRenderer,
 
   // ——— Detaylı metrikler ———
   const detail = el('div', { class: 'page' });
+  const weakAll = r.subs
+    .filter((s) => s.score != null && (s.score as number) < 75)
+    .sort((a, b) => (a.score as number) - (b.score as number))
+    .slice(0, 4);
+  const noteList = (items: string[], empty: string) => (items.length ? `<ul class="tips">${items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : `<p class="muted small">${empty}</p>`);
+  const metricCard = (title: string, color: string, score: number | null, rows: { name: string; score: number | null; value: string; detail: string; advice: string }[]) => {
+    const bars = rows
+      .map((row) => {
+        const v = row.score;
+        return `<div class="metric-row" role="button" tabindex="0" aria-expanded="false">
+          <div class="bar-row"><div class="br-l"><b>${esc(row.name)}</b><small>${esc(row.value)} · ${esc(row.detail)}</small></div><div class="br-track">${v == null ? '<i class="na"></i>' : `<i style="width:${v}%;background:${scoreColor(v)}"></i>`}</div><div class="br-v" style="color:${v == null ? '#8894a3' : scoreColor(v)}">${v == null ? '—' : v}</div></div>
+          <div class="metric-advice"><p>${esc(row.advice)}</p></div>
+        </div>`;
+      })
+      .join('');
+    const scoreText = score == null ? '—' : String(score);
+    const scoreColorCss = score == null ? '#8894a3' : color;
+    return `<div class="metric-head"><h3 style="color:${color}">${esc(title)}</h3><b style="color:${scoreColorCss}">${scoreText}</b></div>${bars}`;
+  };
+  detail.append(
+    el('div', {
+      class: 'card detail-fold',
+      html: `<button type="button" class="detail-toggle" aria-expanded="false"><span><b>Ek ayrıntılar</b><small>Koç önerileri, güçlü ve zayıf yönler</small></span><i></i></button>
+        <div class="detail-extra">
+          <div class="cat-notes">
+            <div><h4>Koç önerileri</h4>${noteList(r.tips, 'Öneri yok.')}</div>
+            <div><h4>Güçlü yönler</h4>${noteList(r.strengths, 'Bu oturumda 90 ve üzeri alan yok.')}</div>
+            <div><h4>Zayıf yönler</h4>${noteList(weakAll.map((s) => s.name), '75 altında ölçüm yok.')}</div>
+          </div>
+          <p class="muted small">Yorgunluk belirtisi, agresif sürüş ve odak puanı karnenin notuna eklenmez. Bir ölçüm satırına basınca o ölçümün tavsiyesi açılır.</p>
+        </div>`,
+    })
+  );
   for (const c of COMPONENTS) {
     const subs = r.subs.filter((s) => s.component === c);
-    detail.append(
-      el('div', {
-        class: 'card',
-        html: `<h3 style="color:${COMPONENT_META[c].color}">${COMPONENT_META[c].title} — ${r.components[c]}</h3>${barRows(subs.map((s) => ({ label: s.name, value: s.score, sub: `${s.value} · ${s.detail}` })))}`,
-      })
-    );
+    detail.append(el('div', { class: 'card', html: metricCard(COMPONENT_META[c].title, COMPONENT_META[c].color, r.components[c], subs) }));
   }
+  detail.append(el('h3', { class: 'insight-head', text: 'Belirti okumaları' }));
+  for (const ins of r.insights) {
+    detail.append(el('div', { class: 'card', html: metricCard(ins.title, ins.color, ins.score, ins.rows) }));
+  }
+  const fold = detail.querySelector<HTMLElement>('.detail-fold')!;
+  const foldBtn = fold.querySelector<HTMLButtonElement>('.detail-toggle')!;
+  const toggleFold = () => {
+    const open = fold.classList.toggle('open');
+    foldBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  foldBtn.addEventListener('click', toggleFold);
+  detail.querySelectorAll<HTMLElement>('.metric-row').forEach((row) => {
+    const toggle = () => {
+      const open = row.classList.toggle('open');
+      row.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    row.addEventListener('click', toggle);
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggle();
+      }
+    });
+  });
   const zoneRows = Object.entries(st.zones)
     .filter(([, z]) => z.time > 3)
     .sort((a, b) => b[1].time - a[1].time)
@@ -205,7 +257,7 @@ export function renderReport(host: HTMLElement, d: ReportData, map: MapRenderer,
   detail.append(
     el('div', {
       class: 'card',
-      html: `<h3>Yöntem</h3><p class="muted small">Olaylar sürüş sırasında kural tabanlı dedektörlerle çıkarılır (şerit/dönüş için Ayna→Sinyal→Manevra sırası, ışık fazı, DUR levhasında en düşük hız, TTC ve takip mesafesi, yanal/boylamsal ivme). Alt metrikler 0–100 aralığına ölçeklenir, bileşen içinde ağırlıklandırılır ve Güvenli sürüş %30 · Kural %25 · Gözlem %20 · Araç hâkimiyeti %15 · Görev & güzergâh %10 ağırlıklarıyla birleştirilir. Kısa oturumlar düşük güvenle 70'e doğru çekilir; ağır ihlaller toplam puana tavan uygular. Tarama ölçümü ${esc('bakış tuşları / webcam kafa takibi / tek tuş')} proxy'sidir — klinik göz takibi değildir.</p>`,
+      html: `<h3>Yöntem</h3><p class="muted small">Olaylar sürüş sırasında kural tabanlı dedektörlerle çıkarılır (şerit/dönüş için Ayna→Sinyal→Manevra sırası, ışık fazı, DUR levhasında en düşük hız, TTC ve takip mesafesi, yanal/boylamsal ivme). Alt metrikler 0–100 aralığına ölçeklenir, bileşen içinde ağırlıklandırılır ve Güvenli sürüş %30 · Kural %25 · Gözlem %20 · Araç hâkimiyeti %15 · Görev & güzergâh %10 ağırlıklarıyla birleştirilir. Kısa oturumlar düşük güvenle 70'e doğru çekilir; ağır ihlaller toplam puana tavan uygular. Yorgunluk belirtisi şerit sapması, direksiyon düzeltmesi, hız dalgalanması, tepki ve tarama seyrelmesinden; agresif sürüş hız, sert kontrol, yakın takip ve zikzaktan; odak puanı ayna ritmi, kavşak taraması ve tepki süresinden okunur. Bu üçü genel nota karışmaz. Tarama ölçümü ${esc('bakış tuşları / webcam kafa takibi / tek tuş')} proxy'sidir — klinik göz takibi veya PERCLOS değildir.</p>`,
     })
   );
   pages.push(detail);
@@ -278,7 +330,7 @@ function standaloneHtml(host: HTMLElement, title: string): string {
       c.replaceWith(img);
     }
   });
-  return `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>${esc(title)} — Sürüş Koçu</title><style>${css}\nbody{overflow:auto;background:#0d1117}.report-doc{max-width:1100px;margin:24px auto;padding:24px}</style></head><body><div class="report-doc overlay-panel">${clone.innerHTML}</div></body></html>`;
+  return `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>${esc(title)} — Sürüş Koçu</title><style>${css}\nbody{overflow:auto;background:#0d1117}.report-doc{max-width:1100px;margin:24px auto;padding:24px}</style></head><body><div class="report-doc overlay-panel">${clone.innerHTML}</div><script>document.addEventListener('click',function(e){var t=e.target;if(!t.closest)return;var foldBtn=t.closest('.detail-toggle');if(foldBtn){var fold=foldBtn.closest('.detail-fold');var open=fold.classList.toggle('open');foldBtn.setAttribute('aria-expanded',open?'true':'false');return;}var row=t.closest('.metric-row');if(!row)return;var open=row.classList.toggle('open');row.setAttribute('aria-expanded',open?'true':'false');});</script></body></html>`;
 }
 
 export { scoreColor };

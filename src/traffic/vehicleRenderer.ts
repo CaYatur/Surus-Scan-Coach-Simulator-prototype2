@@ -89,8 +89,33 @@ export class VehicleRenderer {
     }
   }
 
+  /** The instance buffers are fixed at creation. A dense block of parked cars can exceed that, and every car past the cap stays physical but is never drawn. */
+  private grow(im: THREE.InstancedMesh, cap: number) {
+    const oldM = im.instanceMatrix;
+    const nextM = new THREE.InstancedBufferAttribute(new Float32Array(cap * 16), 16);
+    nextM.setUsage(oldM.usage);
+    (nextM.array as Float32Array).set(oldM.array as Float32Array);
+    im.instanceMatrix = nextM;
+    if (im.instanceColor) {
+      const oldC = im.instanceColor;
+      const nextC = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
+      nextC.setUsage(oldC.usage);
+      (nextC.array as Float32Array).set(oldC.array as Float32Array);
+      im.instanceColor = nextC;
+    }
+  }
+
   /** Replace all instances with the given list (called every frame). */
   draw(list: VehicleVisual[]) {
+    const need = new Map<CarType, number>();
+    for (const v of list) need.set(v.type, (need.get(v.type) ?? 0) + 1);
+    for (const [type, n] of need) {
+      const b = this.batches.get(type);
+      if (!b || n <= b.capacity) continue;
+      const cap = Math.max(n, Math.ceil(b.capacity * 1.5));
+      for (const im of b.meshes) this.grow(im, cap);
+      b.capacity = cap;
+    }
     const counts = new Map<CarType, number>();
     for (const v of list) {
       const b = this.batches.get(v.type);

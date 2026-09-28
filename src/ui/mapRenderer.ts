@@ -243,8 +243,11 @@ export class MapRenderer {
     }
   }
 
-  /** North-up full map fitted into the canvas. Returns the transform for click picking. */
-  drawFull(g: CanvasRenderingContext2D, w: number, h: number, d: MapDynamic): (sx: number, sy: number) => { x: number; z: number } {
+  /** North-up full map fitted into the canvas. Returns click picking and a marker hit test. */
+  drawFull(g: CanvasRenderingContext2D, w: number, h: number, d: MapDynamic): {
+    at: (sx: number, sy: number) => { x: number; z: number };
+    near: (sx: number, sy: number, x: number, z: number, radiusPx?: number) => boolean;
+  } {
     const bw = this.base.width;
     const bh = this.base.height;
     const s = Math.min(w / bw, h / bh);
@@ -271,7 +274,13 @@ export class MapRenderer {
     g.fill();
     g.stroke();
     g.restore();
-    return (sx, sy) => ({ x: (sx - ox) / s / this.scale + this.minX, z: (sy - oy) / s / this.scale + this.minZ });
+    const at = (sx: number, sy: number) => ({ x: (sx - ox) / s / this.scale + this.minX, z: (sy - oy) / s / this.scale + this.minZ });
+    const near = (sx: number, sy: number, x: number, z: number, radiusPx = 18) => {
+      const mx = ox + (x - this.minX) * this.scale * s;
+      const mz = oy + (z - this.minZ) * this.scale * s;
+      return Math.hypot(sx - mx, sy - mz) <= radiusPx;
+    };
+    return { at, near };
   }
 
   /** Static overview (for reports): driven path coloured by speed + event pins. */

@@ -595,9 +595,10 @@ export class CityWorld {
           const side = Math.sign(lane.lateral) || 1;
           const ahead = ep(e, sc + (lane.dir === 1 ? 5 : -5), 0, 0);
           const entering = this.inTown(ahead.x, ahead.z);
-          const p = ep(e, sc, side * (e.halfWidth + SIDEWALK_W + 1.6), 0);
+          const spot = this.pullOntoVerge(e, sc, side * (e.halfWidth + SIDEWALK_W + 1.6));
+          if (!spot) continue;
           const faceH = lane.heading + Math.PI;
-          buildPostBoard(RB, p.x, p.z, faceH, town.name, 3.4, 1.1, entering ? '#f5d23a' : '#f1efe6', entering ? '#111111' : '#b71c1c');
+          buildPostBoard(RB, spot.x, spot.z, faceH, town.name, 3.4, 1.1, entering ? '#f5d23a' : '#f1efe6', entering ? '#111111' : '#b71c1c');
         }
       }
     }
@@ -699,9 +700,15 @@ export class CityWorld {
         const e = n.arms[d]!;
         const atB = e.b === n;
         const lane = ins[0];
-        const sEdge = atB ? lane.stopS + 1.4 : e.length - lane.stopS - 1.4;
+        let sEdge = atB ? lane.stopS + 1.4 : e.length - lane.stopS - 1.4;
         const side = Math.sign(lane.lateral) || 1;
-        const pole = ep(e, sEdge, side * (e.halfWidth + 0.6), CURB_H);
+        let lat = side * (e.halfWidth + 0.6);
+        const settled = this.pullOntoVerge(e, sEdge, lat);
+        if (settled) {
+          sEdge = settled.s;
+          lat = settled.lat;
+        }
+        const pole = ep(e, sEdge, lat, CURB_H);
         const faceH = lane.heading + Math.PI; // faces incoming traffic
         b.setColor('#2d3237');
         b.cylinder(pole.x, pole.z, CURB_H, CURB_H + 3.9, 0.09, 0.08, 8);
@@ -728,7 +735,7 @@ export class CityWorld {
           const armLen = e.halfWidth * 0.75 + 1;
           b.setColor('#2d3237');
           b.cylinder(pole.x, pole.z, CURB_H + 3.9, CURB_H + 6.2, 0.1, 0.09, 8);
-          const tip = ep(e, sEdge, side * (e.halfWidth + 0.6 - armLen), CURB_H);
+          const tip = ep(e, sEdge, lat - side * armLen, CURB_H);
           const midX = (pole.x + tip.x) / 2;
           const midZ = (pole.z + tip.z) / 2;
           const armRot = Math.atan2(tip.x - pole.x, tip.z - pole.z);
@@ -739,6 +746,51 @@ export class CityWorld {
         }
       }
     }
+  }
+
+  /** True when a point lies on drivable pavement (lanes, junction, shoulder, median or parking). */
+  private standsOnRoad(x: number, z: number): boolean {
+    const k = this.net.query(x, z, 0).kind;
+    return k === 'road' || k === 'junction' || k === 'shoulder' || k === 'median' || k === 'parking';
+  }
+
+  /**
+   * Roadside point at signed centreline offset `lat`. If `s` lands in a crossing
+   * (or on the carriageway), walk back along this edge onto the sidewalk / verge.
+   * `occupied` keeps plates from stacking on the same post.
+   */
+  private pullOntoVerge(
+    e: RoadEdge,
+    s: number,
+    lat: number,
+    occupied?: { x: number; z: number }[]
+  ): { x: number; z: number; s: number; lat: number } | null {
+    const margin = 1.8;
+    if (e.length < margin * 2 + 0.8) return null;
+    const lo = margin;
+    const hi = e.length - margin;
+    const inward = s <= e.length / 2 ? 1 : -1;
+    const side = Math.sign(lat) || 1;
+    const base = Math.abs(lat);
+    const crowded = (x: number, z: number) =>
+      occupied?.some((o) => {
+        const dx = o.x - x;
+        const dz = o.z - z;
+        return dx * dx + dz * dz < 6.25;
+      }) ?? false;
+    // Step past the 2.5 m separation so a cluster at the corner does not eat the whole plate.
+    const step = 3.2;
+    const maxI = Math.ceil((hi - lo) / step);
+    for (let i = 0; i <= maxI; i++) {
+      const ss = Math.min(hi, Math.max(lo, s + inward * i * step));
+      for (const extra of [0, 0.65, 1.3]) {
+        const l = side * (base + extra);
+        const p = ep(e, ss, l, 0);
+        if (crowded(p.x, p.z) || this.standsOnRoad(p.x, p.z)) continue;
+        return { x: p.x, z: p.z, s: ss, lat: l };
+      }
+    }
+    return null;
   }
 
   private buildSigns(): THREE.Object3D[] {
@@ -760,6 +812,7 @@ export class CityWorld {
     };
     const net = this.net;
     const tmp = { x: 0, z: 0, h: 0 };
+    const occupied: { x: number; z: number }[] = [];
     for (const e of this.net.edges) {
       const hwy = e.cls === 'highway';
       const base = hwy ? 0 : CURB_H;
@@ -769,7 +822,13 @@ export class CityWorld {
         const side = Math.sign(lane.lateral) || 1;
         const faceH = lane.heading + Math.PI;
         const off = hwy ? e.halfWidth + 1.4 : e.halfWidth + 1.1;
-        const at = (sLane: number, extra = 0) => ep(e, lane.dir === 1 ? sLane : e.length - sLane, side * (off + extra), 0);
+        const sEdgeOf = (sLane: number) => (lane.dir === 1 ? sLane : e.length - sLane);
+        const put = (kind: SignKind, sEdge: number, extra = 0) => {
+          const p = this.pullOntoVerge(e, sEdge, side * (off + extra), occupied);
+          if (!p) return;
+          place(kind, p.x, p.z, faceH, base);
+          occupied.push(p);
+        };
         // Speed limit plates wherever the effective limit changes along the lane
         let prev = -1;
         let prevZone: string | null = null;
@@ -780,21 +839,17 @@ export class CityWorld {
           const cap = Math.min(lim.limit, net.vehicleLimit(tmp.x, tmp.z, lane, null, sl));
           const zoneKey = lim.zone ? lim.zone.label : null;
           if (cap !== prev && (sl === 7 ? e.length > 50 : sl - lastPlaced > 14)) {
-            const p = at(sl);
-            place(limitSign(cap), p.x, p.z, faceH, base);
+            put(limitSign(cap), sEdgeOf(sl));
             lastPlaced = sl;
             prev = cap;
           } else if (cap !== prev && sl === 7) prev = cap;
           if (zoneKey !== prevZone && lim.zone) {
             const zk = lim.zone.kind;
-            const p = at(sl + 14);
-            if (zk === 'school') place('school', p.x, p.z, faceH, base);
-            else if (zk === 'hospital') place('hospital', p.x, p.z, faceH, base);
-            else if (zk === 'market') place('crosswalk', p.x, p.z, faceH, base);
-            if (lim.zone.noHorn) {
-              const p3 = at(sl + 24);
-              place('noHorn', p3.x, p3.z, faceH, base);
-            }
+            const sWarn = sEdgeOf(sl + 14);
+            if (zk === 'school') put('school', sWarn);
+            else if (zk === 'hospital') put('hospital', sWarn);
+            else if (zk === 'market') put('crosswalk', sWarn);
+            if (lim.zone.noHorn) put('noHorn', sEdgeOf(sl + 24));
           }
           prevZone = zoneKey;
         }
@@ -804,38 +859,26 @@ export class CityWorld {
         if (n.kind === 'bend' && L > 260) {
           const conn = lane.outs[0];
           const turnLeft = conn ? angleDiff(conn.to.heading, lane.heading) > 0 : false;
-          const p = at(L - 240);
-          place(turnLeft ? 'curveL' : 'curveR', p.x, p.z, faceH, base);
+          put(turnLeft ? 'curveL' : 'curveR', sEdgeOf(L - 240));
         }
-        if (n.kind === 'roundabout' && L > 80) {
-          const p = at(L - 60);
-          place('roundaboutAhead', p.x, p.z, faceH, base);
-        }
-        if (n.signalized && hwy && L > 300) {
-          const p = at(L - 260);
-          place('signalAhead', p.x, p.z, faceH, base);
-        }
+        if (n.kind === 'roundabout' && L > 80) put('roundaboutAhead', sEdgeOf(L - 60));
+        if (n.signalized && hwy && L > 300) put('signalAhead', sEdgeOf(L - 260));
         if (hwy && L > 500) {
-          for (let sl = 380; sl < L - 380; sl += 700) {
-            const p = at(sl);
-            place('emergencyLane', p.x, p.z, faceH, base);
-          }
+          for (let sl = 380; sl < L - 380; sl += 700) put('emergencyLane', sEdgeOf(sl));
         }
         // Stop / yield at the end node
         const ctl = n.control[lane.arm];
         if (ctl === 'stop' || ctl === 'yield') {
           const s = lane.dir === 1 ? lane.stopS + 0.8 : e.length - lane.stopS - 0.8;
-          const p = ep(e, s, side * (e.halfWidth + 1.0), 0);
-          place(ctl === 'stop' ? 'stop' : 'yield', p.x, p.z, faceH);
+          put(ctl === 'stop' ? 'stop' : 'yield', s);
           if (n.kind === 'roundabout') {
-            const p2 = ep(e, lane.dir === 1 ? lane.stopS - 4 : e.length - lane.stopS + 4, side * (e.halfWidth + 1.0), 0);
-            place('roundabout', p2.x, p2.z, faceH);
+            const s2 = lane.dir === 1 ? lane.stopS - 4 : e.length - lane.stopS + 4;
+            put('roundabout', s2);
           }
         }
         for (const zs of e.zebras) {
           const s = lane.dir === 1 ? zs - 3 : zs + 3;
-          const p = ep(e, s, side * (e.halfWidth + 1.1), 0);
-          place('crosswalk', p.x, p.z, faceH);
+          put('crosswalk', s);
         }
       }
       if (e.oneway !== 0) {
@@ -845,17 +888,22 @@ export class CityWorld {
         const enterHeading = exitAtB ? e.heading + Math.PI : e.heading; // wrong-way entry heading
         const faceH = enterHeading + Math.PI;
         const rightSide = exitAtB ? -1 : 1; // right of the wrong-way driver
-        for (const side of [rightSide, -rightSide]) {
-          const p = ep(e, s, side * (e.halfWidth + 0.9), 0);
+        for (const sd of [rightSide, -rightSide]) {
+          const p = this.pullOntoVerge(e, s, sd * (e.halfWidth + 0.9), occupied);
+          if (!p) continue;
           place('noentry', p.x, p.z, faceH);
+          occupied.push(p);
         }
         const sIn = exitAtB ? 12 : e.length - 12;
         const legalH = e.oneway === 1 ? e.heading : e.heading + Math.PI;
-        const pr = ep(e, sIn, (e.oneway === 1 ? 1 : -1) * (e.halfWidth + 1.1), 0);
-        place('oneway', pr.x, pr.z, legalH + Math.PI);
+        const pr = this.pullOntoVerge(e, sIn, (e.oneway === 1 ? 1 : -1) * (e.halfWidth + 1.1), occupied);
+        if (pr) {
+          place('oneway', pr.x, pr.z, legalH + Math.PI);
+          occupied.push(pr);
+        }
       }
     }
-    // Hospital sign near hospital landmark
+    // Hospital sign near hospital landmark, kept off the carriageway
     for (const lm of this.map.landmarks) {
       if (lm.id !== 'hastane') continue;
       const near = this.net.nearestLane(lm.x, lm.z);
@@ -864,7 +912,13 @@ export class CityWorld {
         near.lane.path.sample(Math.max(0, near.s - 60), p);
         const rx = -Math.cos(p.h);
         const rz = Math.sin(p.h);
-        place('hospital', p.x + rx * 6.5, p.z + rz * 6.5, p.h + Math.PI);
+        let hx = p.x + rx * 6.5;
+        let hz = p.z + rz * 6.5;
+        for (let i = 0; i < 8 && this.standsOnRoad(hx, hz); i++) {
+          hx += rx * 0.8;
+          hz += rz * 0.8;
+        }
+        if (!this.standsOnRoad(hx, hz)) place('hospital', hx, hz, p.h + Math.PI);
       }
     }
 

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { approach } from '../core/math';
 import { MeshBuilder } from '../world/meshBuilder';
 import type { CarDims } from './carModels';
 
@@ -37,6 +38,17 @@ export class Cockpit {
   readonly mirrorAnchors: { left: THREE.Vector3; right: THREE.Vector3; rear: THREE.Vector3 };
   readonly mirrorPlanes: { left: THREE.Mesh; right: THREE.Mesh; rear: THREE.Mesh };
   private wheel = new THREE.Group();
+  private hands: { ball: THREE.Mesh; fore: THREE.Mesh; upper: THREE.Mesh; elbow: THREE.Mesh; grip: number; home: number; lift: number; busy: boolean; side: number }[] = [];
+  private handFrom = new THREE.Vector3();
+  private handTo = new THREE.Vector3();
+  private handMid = new THREE.Vector3();
+  private elbowPos = new THREE.Vector3();
+  private shoulderPos = new THREE.Vector3();
+  private handUp = new THREE.Vector3(0, 1, 0);
+  private handQ = new THREE.Quaternion();
+  /** Visual rim angle. The car steers immediately; the wheel eases toward that angle. */
+  private wheelShown = 0;
+  private readonly rimR = 0.186;
   private clusterCanvas: HTMLCanvasElement;
   private clusterTex: THREE.CanvasTexture;
   private screenCanvas: HTMLCanvasElement;
@@ -189,44 +201,74 @@ export class Cockpit {
     }
 
     // ——— Steering wheel ———
-    const wheelPos = new THREE.Vector3(cx, belt - 0.05, dashBack - 0.3);
+    // Local +Y is 12 o'clock. The driver sits on −Z and looks toward +Z, so the
+    // face they see is the wheel's −Z side.
+    const wheelPos = new THREE.Vector3(cx, belt - 0.02, dashBack - 0.28);
     this.wheel.position.copy(wheelPos);
-    this.wheel.rotation.x = -0.42; // tilt: top toward driver
-    const leather = new THREE.MeshStandardMaterial({ color: 0x18191b, roughness: 0.6 });
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.185, 0.022, 10, 40), leather);
+    this.wheel.rotation.x = -0.38; // top of the rim tilts toward the driver
+    const leather = new THREE.MeshStandardMaterial({ color: 0x141618, roughness: 0.78, metalness: 0.04 });
+    const spokeMat = new THREE.MeshStandardMaterial({ color: 0x1c1e22, roughness: 0.45, metalness: 0.55 });
+    const chrome = new THREE.MeshStandardMaterial({ color: 0xc5ccd4, roughness: 0.28, metalness: 0.86 });
+    const airbagMat = new THREE.MeshStandardMaterial({ color: 0x2c3036, roughness: 0.62, metalness: 0.08 });
+    const RIM = this.rimR;
     const spin = new THREE.Group();
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(RIM, 0.0165, 14, 56), leather);
     spin.add(rim);
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.05, 20), new THREE.MeshStandardMaterial({ color: 0x24272b, roughness: 0.5, metalness: 0.3 }));
+    // Softer inner grip and a bright lip so the rim reads as round, not a wire.
+    const grip = new THREE.Mesh(new THREE.TorusGeometry(RIM - 0.004, 0.011, 10, 48), new THREE.MeshStandardMaterial({ color: 0x0c0d0f, roughness: 0.9 }));
+    grip.position.z = -0.004;
+    spin.add(grip);
+    const lip = new THREE.Mesh(new THREE.TorusGeometry(RIM + 0.002, 0.0032, 8, 48), chrome);
+    lip.position.z = -0.012;
+    spin.add(lip);
+    // Three spokes: 9 o'clock, 3 o'clock and 6 o'clock, thicker at the hub.
+    for (const a of [Math.PI, 0, -Math.PI / 2]) {
+      const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.118, 0.034, 0.016), spokeMat);
+      spoke.position.set(Math.cos(a) * 0.078, Math.sin(a) * 0.078, -0.006);
+      spoke.rotation.z = a;
+      spin.add(spoke);
+      const neck = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.022, 0.02), spokeMat);
+      neck.position.set(Math.cos(a) * 0.148, Math.sin(a) * 0.148, -0.004);
+      neck.rotation.z = a;
+      spin.add(neck);
+    }
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.058, 0.028, 28), spokeMat);
     hub.rotation.x = Math.PI / 2;
+    hub.position.z = -0.004;
     spin.add(hub);
-    const logo = new THREE.Mesh(new THREE.CircleGeometry(0.022, 16), new THREE.MeshStandardMaterial({ color: 0xc0c6cc, metalness: 0.9, roughness: 0.25 }));
-    logo.position.z = -0.027;
-    logo.rotation.y = Math.PI;
-    spin.add(logo);
-    for (const a of [Math.PI / 2 + 0.25, -Math.PI / 2 - 0.25, Math.PI]) {
-      const sp = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.028, 0.014), leather);
-      sp.position.set(Math.cos(a) * 0.1, Math.sin(a) * 0.1, 0);
-      sp.rotation.z = a;
-      spin.add(sp);
-    }
-    // top-centre marker stripe helps to read the wheel angle
-    const marker = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.025, 0.05), new THREE.MeshStandardMaterial({ color: 0xd0d4d8 }));
-    marker.position.set(0, 0.185, 0);
+    const bezel = new THREE.Mesh(new THREE.TorusGeometry(0.058, 0.0045, 8, 32), chrome);
+    bezel.position.z = -0.016;
+    spin.add(bezel);
+    const airbag = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.05, 0.018, 28), airbagMat);
+    airbag.rotation.x = Math.PI / 2;
+    airbag.position.z = -0.02;
+    spin.add(airbag);
+    const emblem = new THREE.Mesh(new THREE.CircleGeometry(0.014, 20), chrome);
+    emblem.position.z = -0.030;
+    emblem.rotation.y = Math.PI; // faces the driver
+    spin.add(emblem);
+    // 12 o'clock index, set into the rim so the angle is easy to read.
+    const marker = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.02, 0.008), chrome);
+    marker.position.set(0, RIM, -0.014);
     spin.add(marker);
-    // hands on the wheel (9 & 3 o'clock) — gloves
-    const glove = new THREE.MeshStandardMaterial({ color: 0x2f3338, roughness: 0.8 });
-    for (const sx of [-1, 1]) {
-      const hand = new THREE.Mesh(new THREE.CapsuleGeometry(0.03, 0.06, 4, 8), glove);
-      hand.position.set(sx * 0.185, 0.0, -0.01);
-      hand.rotation.z = Math.PI / 2;
-      spin.add(hand);
-      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.36, 8), new THREE.MeshStandardMaterial({ color: 0x3b4a5e, roughness: 0.9 }));
-      arm.position.set(sx * 0.2, -0.03, -0.2);
-      arm.rotation.x = Math.PI / 2 - 0.3;
-      spin.add(arm);
-    }
     spin.name = 'spin';
     this.wheel.add(spin);
+    // Round hands. Forearm and upper arm are posed from the grip to a fixed shoulder.
+    const glove = new THREE.MeshStandardMaterial({ color: 0xe7ebf1, roughness: 0.42 });
+    const sleeve = new THREE.MeshStandardMaterial({ color: 0x3a4656, roughness: 0.72 });
+    const limb = (r0: number, r1: number) => new THREE.Mesh(new THREE.CylinderGeometry(r0, r1, 1, 14), sleeve);
+    for (const [side, home] of [
+      [1, 0],
+      [-1, Math.PI],
+    ] as const) {
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(0.038, 20, 16), glove);
+      const fore = limb(0.034, 0.046);
+      const upper = limb(0.046, 0.058);
+      const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.05, 14, 12), sleeve);
+      this.wheel.add(ball, fore, upper, elbow);
+      this.hands.push({ ball, fore, upper, elbow, grip: home, home, lift: 0, busy: false, side });
+    }
+    this.placeHands(0, 0);
     // column
     const column = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.3, 10), new THREE.MeshStandardMaterial({ color: 0x1b1c1f }));
     column.rotation.x = Math.PI / 2;
@@ -358,6 +400,48 @@ export class Cockpit {
 
   private wsTilt = 0;
 
+  /** Cylinder of height 1, laid along the segment from `a` to `b`. */
+  private linkLimb(mesh: THREE.Mesh, a: THREE.Vector3, b: THREE.Vector3) {
+    this.handTo.copy(b).sub(a);
+    const len = Math.max(0.05, this.handTo.length());
+    this.handTo.multiplyScalar(1 / len);
+    this.handMid.copy(a).add(b).multiplyScalar(0.5);
+    mesh.position.copy(this.handMid);
+    mesh.scale.set(1, len, 1);
+    this.handQ.setFromUnitVectors(this.handUp, this.handTo);
+    mesh.quaternion.copy(this.handQ);
+  }
+
+  /** Keep each hand on the rim. The arm always runs from that hand to the shoulder. */
+  private placeHands(wheelZ: number, dt: number) {
+    const R = this.rimR;
+    for (const h of this.hands) {
+      const shown = h.grip + wheelZ;
+      if (!h.busy && Math.abs(shown - h.home) > 1.05) h.busy = true;
+      if (h.busy) {
+        h.lift = Math.min(1, h.lift + dt * 7);
+        if (h.lift > 0.55) {
+          const targetGrip = h.home - wheelZ;
+          h.grip = approach(h.grip, targetGrip, 8 * dt);
+          if (Math.abs(h.grip - targetGrip) < 0.05) h.busy = false;
+        }
+      } else h.lift = Math.max(0, h.lift - dt * 6);
+      const a = h.grip + wheelZ;
+      const radial = R + h.lift * 0.045;
+      const z = -0.04 - h.lift * 0.055;
+      const hand = this.handFrom.set(Math.cos(a) * radial, Math.sin(a) * radial, z);
+      h.ball.position.copy(hand);
+      // Shoulder sits down and back toward the driver, clear of the rim.
+      const shoulder = this.shoulderPos.set(h.side * 0.2, -0.34, -0.38);
+      const elbow = this.elbowPos.copy(hand).lerp(shoulder, 0.46);
+      elbow.z -= 0.08;
+      elbow.x += h.side * 0.05;
+      h.elbow.position.copy(elbow);
+      this.linkLimb(h.fore, hand, elbow);
+      this.linkLimb(h.upper, elbow, shoulder);
+    }
+  }
+
   setMirrorTextures(left: THREE.Texture | null, right: THREE.Texture | null, rear: THREE.Texture | null) {
     const set = (m: THREE.Mesh, t: THREE.Texture | null) => {
       const mat = m.material as THREE.MeshBasicMaterial;
@@ -378,7 +462,14 @@ export class Cockpit {
 
   update(s: CockpitState, dt: number, rain: number) {
     const spin = this.wheel.getObjectByName('spin')!;
-    spin.rotation.z = s.wheelAngle;
+    // The car has already steered. Ease the rim toward that angle so it does not snap.
+    // Positive Z rotation is clockwise from the driver's seat, so a left turn is negated.
+    const target = -s.wheelAngle;
+    const err = Math.abs(target - this.wheelShown);
+    const rate = Math.min(4.2, Math.max(1.1, err * 1.15));
+    this.wheelShown = approach(this.wheelShown, target, rate * dt);
+    spin.rotation.z = this.wheelShown;
+    this.placeHands(this.wheelShown, dt);
     this.stalk.rotation.z = s.signalL ? 0.18 : s.signalR ? -0.18 : 0;
     this.gearLever.position.z = this.gearLever.userData.z0 ?? this.gearLever.position.z;
     this.gearLever.userData.z0 = this.gearLever.userData.z0 ?? this.gearLever.position.z;

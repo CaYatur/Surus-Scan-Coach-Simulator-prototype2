@@ -2,6 +2,7 @@ import { approach, clamp } from '../core/math';
 import { settings } from '../core/settings';
 import type { DriveControls } from '../vehicle/dynamics';
 import { actionsFor, bindings, type BindAction } from './bindings';
+import { familyFromId, noteControlDevice } from './prompts';
 
 export type GlanceTarget = 'none' | 'mirrorL' | 'mirrorR' | 'mirrorRear' | 'shoulderL' | 'shoulderR' | 'generic';
 
@@ -79,6 +80,7 @@ export class Input {
       this.keys.add(e.code);
       this.lastActivity = performance.now();
       this.lastSource = 'keyboard';
+      noteControlDevice('keyboard');
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.keys.clear());
@@ -199,6 +201,7 @@ export class Input {
       if (padActive) {
         source = s.useWheelMapping ? 'wheel' : 'gamepad';
         this.lastSource = source;
+        noteControlDevice(s.useWheelMapping ? 'wheel' : familyFromId(pad.id));
         this.lastActivity = performance.now();
         active = true;
       }
@@ -238,7 +241,7 @@ export class Input {
           else if (rx < -0.45) glance = 'mirrorL';
           else if (rx > 0.9) glance = 'shoulderR';
           else if (rx > 0.45) glance = 'mirrorR';
-          else if (ry > 0.6) glance = 'mirrorRear';
+          else if (ry > 0.55 || ry < -0.55) glance = 'mirrorRear';
         }
         if (legacy && btn(11)) glance = 'generic';
       } else if (legacy && (btn(6) || btn(7))) {

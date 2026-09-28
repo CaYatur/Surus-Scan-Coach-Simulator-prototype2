@@ -188,20 +188,30 @@ class App implements AppApi {
     return this.session?.bundle.map.id ?? null;
   }
 
+  clearMapTarget() {
+    this.session?.clearMapTarget();
+  }
+
   bigMap(canvas: HTMLCanvasElement) {
     const s = this.session;
     if (!s) return null;
     const g = canvas.getContext('2d')!;
     const pos = s.position;
-    const pick = s.bundle.mapRenderer.drawFull(g, canvas.width, canvas.height, {
+    const map = s.bundle.mapRenderer.drawFull(g, canvas.width, canvas.height, {
       player: pos,
-      route: s.bundle.nav.route?.line,
+      route: s.routeLine(),
       markers: s.bundle.markerList(),
       trail: s.trailPoints,
     });
     return (sx: number, sy: number) => {
-      const p = pick(sx, sy);
+      const dest = s.navDestination();
+      if (dest && map.near(sx, sy, dest.x, dest.z)) {
+        s.clearMapTarget();
+        return true;
+      }
+      const p = map.at(sx, sy);
       s.navigateTo(p.x, p.z);
+      return false;
     };
   }
 
