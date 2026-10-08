@@ -11,10 +11,17 @@ import { renderReport } from './ui/report';
 import { WorldBundle } from './game/worldBundle';
 import { Session, type SessionConfig, type ReportData } from './game/session';
 import { audio } from './audio/audio';
+import { Companion } from './link/companion';
+import { hostBridge, type HostSource } from './link/hostBridge';
+import { isPhoneLike } from './link/device';
+import { parseLinkCode } from './link/link';
+import type { LinkState, LinkTelemetry } from './link/protocol';
+import { activeProfile } from './coach/profiles';
+import { TIME_LABEL, WEATHER_LABEL } from './world/environment';
 
 type Mode = 'menu' | 'loading' | 'driving';
 
-class App implements AppApi {
+class App implements AppApi, HostSource {
   private host = document.getElementById('app')!;
   private canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
   private camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 4500);
@@ -32,6 +39,11 @@ class App implements AppApi {
   private orbit = 0;
   readonly detectedQuality: QualityLevel;
   perf = { ms: 0, calls: 0, tris: 0 };
+  readonly isPhone = isPhoneLike();
+  readonly companion: Companion;
+  /** The companion dashboard covers the screen — skip 3D rendering meanwhile. */
+  private suspended = false;
+  private cityQueued = false;
   private menuPlayer = { x: 40, z: -30, heading: 0, speed: 0, length: 4, width: 1.8 };
 
   constructor() {
@@ -41,6 +53,19 @@ class App implements AppApi {
     this.pipeline.apply(qualityProfile(settings.get().quality));
     this.hud = new Hud(this.host);
     this.hud.setVisible(false);
+    this.hud.onToast = (text, kind) => hostBridge.notice(text, kind);
+    this.companion = new Companion(document.body);
+    this.companion.onVisibility = (v) => {
+      this.suspended = v;
+      if (v) this.session?.setPaused(true);
+      else {
+        this.last = performance.now();
+        if (!this.isPhone) this.buildMenuCity();
+        const s = this.session;
+        if (this.mode === 'driving' && s && !s.ended && !this.screens.overlayOpen && !this.screens.menusVisible) this.screens.pauseMenu();
+        else this.screens.refresh();
+      }
+    };
     this.screens = new Screens(this.host, this);
     this.screens.onOverlayChange = (open) => {
       if (open) this.session?.setPaused(true);
@@ -60,15 +85,34 @@ class App implements AppApi {
     };
     window.addEventListener('pointerdown', unlock);
     window.addEventListener('keydown', unlock);
+    hostBridge.attach(this);
+    // A phone that opened the PC's pairing link (?baglan=CODE) or was paired before goes straight to the dashboard
+    const params = new URLSearchParams(location.search);
+    const joinCode = params.get('baglan') ? parseLinkCode(params.get('baglan')!) : null;
+    if (params.has('baglan')) {
+      params.delete('baglan');
+      const q = params.toString();
+      history.replaceState(null, '', location.pathname + (q ? `?${q}` : '') + location.hash);
+    }
+    if (joinCode) this.companion.join(joinCode);
+    else if (this.companion.resumeSaved()) this.companion.open();
+    // (after the link resume above: the phone's main-menu QR card starts a fresh pairing otherwise)
     this.screens.show('main');
-    // Build the city in the background for the animated menu
+    // Build the city in the background for the animated menu (deferred while the dashboard is up).
+    // Phones skip it: they are mostly companion displays, and a drive builds its map on demand anyway.
+    if (!this.suspended && !this.isPhone) this.buildMenuCity();
+    requestAnimationFrame((t) => this.frame(t));
+  }
+
+  private buildMenuCity() {
+    if (this.cityQueued) return;
+    this.cityQueued = true;
     this.screens.loading('Şehir oluşturuluyor…');
     setTimeout(() => {
       this.getBundle('city');
-      this.useMenuBackground();
+      if (this.mode === 'menu') this.useMenuBackground();
       this.screens.loading(null);
     }, 30);
-    requestAnimationFrame((t) => this.frame(t));
   }
 
   private getBundle(id: 'training' | 'city'): WorldBundle {
@@ -128,6 +172,9 @@ class App implements AppApi {
           showReport: (d) => this.showReport(d),
         },
       });
+      this.session.onCoach = (e) => hostBridge.coachEvent(e);
+      this.session.onSegment = () => hostBridge.segmentStart();
+      hostBridge.segmentStart();
       this.hud.setVisible(true);
       this.mode = 'driving';
       this.screens.loading(null);
@@ -218,6 +265,7 @@ class App implements AppApi {
   private showReport(d: ReportData) {
     const s = this.session;
     if (!s) return;
+    hostBridge.report(d);
     s.setPaused(true);
     this.hud.setVisible(false);
     const panel = this.screens.report();
@@ -239,6 +287,43 @@ class App implements AppApi {
       onMenu: () => this.quitToMenu(),
       csv: () => s.csv(),
     });
+  }
+
+  // ——————————————————————————— companion link (HostSource) ———————————————————————————
+
+  linkState(): LinkState {
+    const s = this.session;
+    const profile = activeProfile()?.name ?? null;
+    if (this.mode !== 'driving' || !s) return { mode: this.mode === 'loading' ? 'loading' : 'menu', map: '', conditions: '', profile, mission: null };
+    const env = s.bundle.env;
+    const r = s.runner;
+    return {
+      mode: s.ended ? 'report' : s.paused ? 'paused' : 'driving',
+      map: s.bundle.map.name,
+      conditions: `${TIME_LABEL[env.time]} · ${WEATHER_LABEL[env.weather]}`,
+      profile,
+      mission: r ? { icon: r.def.icon, title: r.def.title, subtitle: r.def.subtitle, objectives: r.objectives().map((o) => ({ title: o.title, status: o.status })) } : null,
+    };
+  }
+
+  linkTelemetry(): LinkTelemetry | null {
+    const s = this.session;
+    if (this.mode !== 'driving' || !s || s.ended || s.paused) return null;
+    return s.linkTelemetry();
+  }
+
+  remotePause() {
+    const s = this.session;
+    if (this.mode !== 'driving' || !s || s.ended || s.paused) return;
+    this.screens.pauseMenu();
+  }
+
+  remoteResume() {
+    const s = this.session;
+    if (this.mode !== 'driving' || !s || s.ended || !s.paused) return;
+    this.screens.closeOverlay();
+    this.screens.hideMenus();
+    this.resume();
   }
 
   // ——————————————————————————— overlays & keys ———————————————————————————
@@ -271,6 +356,8 @@ class App implements AppApi {
     requestAnimationFrame((tt) => this.frame(tt));
     const dt = Math.max(0, Math.min(0.1, (t - this.last) / 1000));
     this.last = t;
+    // Companion dashboard up, or a menu overlay (e.g. the QR scanner) covering the animated city: save the GPU
+    if (this.suspended || (this.mode === 'menu' && this.screens.overlayOpen)) return;
     if (this.mode === 'driving' && this.session) {
       const t0 = performance.now();
       const info = this.pipeline.renderer.info;

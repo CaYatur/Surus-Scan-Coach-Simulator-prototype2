@@ -47,6 +47,8 @@ export class Hud {
   private conditionsEl: HTMLElement;
   private lastMission = '';
   mode: HudMode = 'full';
+  /** Mirrors every toast (used by the companion-display link). */
+  onToast: ((text: string, kind: 'info' | 'good' | 'warn' | 'bad') => void) | null = null;
 
   constructor(host: HTMLElement) {
     this.root = el('div', { id: 'hud' });
@@ -234,6 +236,7 @@ export class Hud {
   }
 
   toast(text: string, kind: 'info' | 'good' | 'warn' | 'bad' = 'info', ms = 3200) {
+    this.onToast?.(text, kind);
     const t = el('div', { class: `toast ${kind}`, text });
     this.toasts.append(t);
     while (this.toasts.children.length > 3) this.toasts.firstChild?.remove();

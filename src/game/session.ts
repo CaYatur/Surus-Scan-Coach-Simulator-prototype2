@@ -24,6 +24,7 @@ import type { RenderPipeline } from '../render/pipeline';
 import { CURB_H } from '../world/roadNetwork';
 import type { Contact } from '../world/colliders';
 import type { AICar, PlayerInfo } from '../traffic/aiTraffic';
+import type { LinkTelemetry } from '../link/protocol';
 
 export type SessionConfig = {
   mapId: 'training' | 'city';
@@ -73,6 +74,9 @@ export class Session implements MissionHost {
   readonly telemetry = new Telemetry();
   runner: MissionRunner | null = null;
   segment: SegmentKind = 'free';
+  /** Observers for the companion-display link. */
+  onCoach: ((e: CoachEvent) => void) | null = null;
+  onSegment: (() => void) | null = null;
   paused = false;
   ended = false;
   private elapsed = 0;
@@ -255,6 +259,7 @@ export class Session implements MissionHost {
     this.hardCrashAt = -1;
     this.runner = null;
     this.segment = 'free';
+    this.onSegment?.();
     if (def) {
       this.segment = def.category === 'calibration' ? 'calibration' : 'mission';
       this.runner = new MissionRunner(def, this);
@@ -320,6 +325,7 @@ export class Session implements MissionHost {
 
   private onCoachEvent(e: CoachEvent) {
     this.hud.pushEvent(e);
+    this.onCoach?.(e);
     const s = settings.get();
     if (e.severity === 'critical' || e.severity === 'major') {
       if (s.liveCoachHints) this.hud.toast(e.message, 'bad', 3500);
@@ -1015,6 +1021,21 @@ export class Session implements MissionHost {
       scan: { rate: this.monitor.scan.rate(), maxGap: this.monitor.scan.maxGap, glances: this.monitor.scan.count(), shoulder: this.monitor.scan.count('shoulderL') + this.monitor.scan.count('shoulderR') },
       at: Date.now(),
     });
+  }
+
+  /** Live readout for the companion display. */
+  linkTelemetry(): LinkTelemetry {
+    return {
+      kmh: Math.round(this.dyn.kmh),
+      limit: this.lastQ.limit ?? 50,
+      gear: this.gearLabel(),
+      signal: this.lights.hazard ? 'hazard' : this.lights.signal,
+      overall: this.live ? this.live.overall : null,
+      components: this.live ? this.live.components : null,
+      t: Math.round(this.elapsed - this.segStart),
+      km: Math.round(this.monitor.stats.distance / 100) / 10,
+      mirrorRate: Math.round(this.monitor.scan.rate() * 10) / 10,
+    };
   }
 
   csv(): string {

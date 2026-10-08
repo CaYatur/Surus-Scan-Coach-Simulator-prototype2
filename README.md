@@ -91,6 +91,16 @@ Puanlama 5 bileşen: **Güvenli sürüş %30 · Kural %25 · Gözlem %20 · Ara�
 - Dışa aktarma: bağımsız HTML rapor, 10 Hz telemetri CSV, oturum JSON.
 - Karne: EWMA ile güncellenen genel not ve 5 eksen, gelişim grafiği, rozetler, son oturumlar, kişisel sürüş profili; profiller JSON olarak dışa/içe aktarılabilir.
 
+### 📱 Telefon: Canlı Koç Ekranı (ikinci ekran)
+Oyunu bilgisayarda oynarken telefonu **canlı uyarı ekranı** olarak bağlayın:
+1. Telefonda aynı sayfayı açın — telefon algılanır ve ana ekranda **QR kod + 8 haneli kod** çıkar (çıkmazsa **Ayarlar → Telefon Ekranı**).
+2. Bilgisayarda **Telefonu Bağla** (ana menü, duraklatma menüsü veya Ayarlar → Telefon Ekranı) → telefonun QR kodunu bilgisayarın kamerasına gösterin. Kamera yoksa kodu elle yazın.
+   *Ters yön de çalışır:* bilgisayarın gösterdiği QR'ı telefonun kendi kamerasıyla okutursanız telefon doğrudan bağlanır.
+3. Telefon tam ekran **Canlı Koç** paneline geçer: hız göstergesi + hız sınırı levhası, vites ve sinyaller, canlı puan halkası ve 5 bileşen, kaza / ihlal / uyarı / olumlu sayaçları, görev hedefleri, filtrelenebilir olay akışı, oturum bitince rapor kartı.
+   Kaza ve ciddi ihlallerde ekran renkli yanıp söner, büyük uyarı kartı çıkar; isteğe göre **titreşim, ses ve Türkçe sesli okuma**. Telefondan oyunu **duraklatıp devam ettirebilirsiniz**. Ekran açık tutulur (Wake Lock); sayfa yenilense de eşleşme hatırlanır.
+
+Teknik: site statik olduğu için cihazlar herkese açık MQTT-over-WebSocket sunucuları (EMQX, HiveMQ, Mosquitto — hangisi erişilebilirse) üzerinden, rastgele eşleşme koduna ait kanalda haberleşir (`src/link/`). Yalnızca sürüş olayları, puanlar ve hız gibi veriler gönderilir. Kendi sunucunuz için Ayarlar → Telefon Ekranı → Gelişmiş'e `wss://…` adresi girin (iki cihazda da aynı). Bilgisayar kamerası yalnızca HTTPS veya `localhost` üzerinde açılır; yerel ağda `npm run dev` ile denerken telefonda “Network” adresini açın.
+
 ### Grafik
 Gökyüzü + güneş/ay, gölgeler, PBR malzemeler, ortam yansımaları, bloom, FXAA/SMAA, zaman (sabah/öğle/gün batımı/gece) ve hava (açık/bulutlu/yağmur/sis). Gece aydınlatılmış pencereler, sokak lambası ışık havuzları ve gerçek far ışıkları.
 **Kalite ön ayarları** (Düşük/Orta/Yüksek/Ultra) ilk açılışta GPU'ya göre otomatik önerilir.
@@ -125,6 +135,7 @@ src/
   coach/      olay tespiti, tarama takibi, telemetri, puanlama, profil/karne
   game/       oturum (ana döngü) ve harita paketi
   ui/         HUD, menüler, rapor, grafikler, harita çizimi
+  link/       telefon ⇄ bilgisayar bağlantısı (MQTT/WebSocket), QR üretme/okuma, Canlı Koç ekranı
   audio/      sentezlenmiş sesler + Türkçe sesli yönlendirme
 ```
 
