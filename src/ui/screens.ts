@@ -27,6 +27,9 @@ import { Input } from '../input/input';
 import type { HeadTracker } from '../input/headTracker';
 import { audio } from '../audio/audio';
 import { storage } from '../core/storage';
+import type { Companion } from '../link/companion';
+import { hostBridge } from '../link/hostBridge';
+import { displayPairCard, hostPairPanel, linkSettings } from '../link/pairUi';
 
 export interface AppApi {
   startSession(cfg: SessionConfig): void;
@@ -42,6 +45,9 @@ export interface AppApi {
   clearMapTarget(): void;
   head: HeadTracker;
   detectedQuality: QualityLevel;
+  companion: Companion;
+  /** Phone/tablet: the main menu offers the companion-display QR. */
+  isPhone: boolean;
 }
 
 type ScreenName = 'main' | 'free' | 'missions' | 'karne' | 'settings' | 'help' | 'profiles';
@@ -55,6 +61,7 @@ export class Screens {
   private stack: ScreenName[] = [];
   private overlay: HTMLElement;
   private settingsTimer = 0;
+  private overlayDispose: (() => void) | null = null;
   onOverlayChange: ((open: boolean) => void) | null = null;
 
   constructor(host: HTMLElement, app: AppApi) {
@@ -85,6 +92,15 @@ export class Screens {
       return;
     }
     this.show(prev, false);
+  }
+
+  get menusVisible() {
+    return !this.root.classList.contains('hidden');
+  }
+
+  /** Redraw the visible menu (e.g. after the link status changed elsewhere). */
+  refresh() {
+    if (this.menusVisible) this.show(this.stack[this.stack.length - 1] ?? 'main', false);
   }
 
   hideMenus() {
@@ -165,6 +181,13 @@ export class Screens {
       tile('⚙️', 'Ayarlar', 'Grafik, kontrol, direksiyon, tarama modu', () => this.show('settings')),
       tile('❓', 'Nasıl Oynanır', 'Kontroller ve puanlama', () => this.show('help')),
     ]);
+    if (!this.app.isPhone) {
+      const st = hostBridge.link.status;
+      const n = hostBridge.displays.size;
+      tiles.append(
+        tile('📱', 'Telefonu Bağla', st === 'connected' ? `Bağlı · ${n > 1 ? `${n} ekran` : 'Canlı Koç Ekranı'}` : 'Telefon canlı uyarı ekranı olsun (QR)', () => this.linkPanel(), `link-tile ${st === 'connected' ? 'on' : ''}`)
+      );
+    }
     const note = el('div', {
       class: 'main-note',
       html: !p
@@ -173,7 +196,8 @@ export class Screens {
           ? 'İpucu: Önce <b>Kalibrasyon Programı</b>\'nı tamamlayın — kişisel sürüş stiliniz çıkarılır ve sonraki sürüşler buna göre de yorumlanır.'
           : `Hoş geldin <b>${esc(p.name)}</b>. Son oturum: ${p.sessions[0] ? `${esc(p.sessions[0].missionTitle ?? (p.sessions[0].kind === 'free' ? 'Serbest sürüş' : p.sessions[0].kind))} — ${p.sessions[0].overall} puan` : '—'}`,
     });
-    const wrap = el('div', { class: 'main' }, [el('div', { class: 'main-top' }, [el('span'), this.profileChip()]), hero, tiles, note, el('div', { class: 'version', text: 'v1.0 · Three.js · tarayıcıda çalışır, veriler cihazında kalır' })]);
+    const pair = this.app.isPhone ? displayPairCard(this.app.companion, true) : null;
+    const wrap = el('div', { class: 'main' }, [el('div', { class: 'main-top' }, [el('span'), this.profileChip()]), hero, pair, tiles, note, el('div', { class: 'version', text: 'v1.0 · Three.js · tarayıcıda çalışır, veriler cihazında kalır' })]);
     return wrap;
   }
 
@@ -493,6 +517,7 @@ export class Screens {
       ['tarama', 'Tarama modu'],
       ['ses', 'Ses'],
       ['koc', 'Koçluk'],
+      ['baglanti', 'Telefon Ekranı'],
       ['veri', 'Veri'],
     ];
     const bar = el('div', { class: 'seg tabs-big' });
@@ -518,6 +543,8 @@ export class Screens {
   private settingsTabContent(tab: string, redraw: () => void): HTMLElement[] {
     const s = settings.get();
     switch (tab) {
+      case 'baglanti':
+        return linkSettings(this.app.companion, () => this.linkPanel(), this.app.isPhone);
       case 'grafik': {
         const seg = el('div', { class: 'seg quality' });
         const names: Record<QualityLevel, string> = { low: 'Düşük', medium: 'Orta', high: 'Yüksek', ultra: 'Ultra' };
@@ -770,7 +797,9 @@ export class Screens {
 
   // ——————————————————————————— in-drive overlays ———————————————————————————
 
-  private openOverlay(content: HTMLElement, cls = '') {
+  private openOverlay(content: HTMLElement, cls = '', dispose: (() => void) | null = null) {
+    this.disposeOverlay();
+    this.overlayDispose = dispose;
     this.overlay.innerHTML = '';
     this.overlay.className = `overlay ${cls}`;
     const panel = el('div', { class: 'overlay-panel' }, [content]);
@@ -780,7 +809,26 @@ export class Screens {
     return panel;
   }
 
+  private disposeOverlay() {
+    const d = this.overlayDispose;
+    this.overlayDispose = null;
+    d?.();
+  }
+
+  /** "Telefonu Bağla" — webcam QR scanner and pairing status. */
+  linkPanel() {
+    const inSession = this.app.inSession();
+    const panel = hostPairPanel(() => {
+      this.closeOverlay();
+      // Refresh the menu underneath (its link status), or go back to the pause menu mid-drive
+      if (this.menusVisible) this.refresh();
+      else if (inSession) this.pauseMenu();
+    });
+    this.openOverlay(panel.root, 'dim link', panel.dispose);
+  }
+
   closeOverlay() {
+    this.disposeOverlay();
     this.overlay.classList.add('hidden');
     this.overlay.innerHTML = '';
     this.onOverlayChange?.(false);
@@ -809,6 +857,7 @@ export class Screens {
         this.closeOverlay();
         this.show('settings');
       }),
+      this.btn(hostBridge.link.status === 'connected' ? '📱 Telefon bağlı' : '📱 Telefonu bağla', '', () => this.linkPanel()),
       this.btn('Nasıl oynanır', '', () => {
         this.closeOverlay();
         this.show('help');
@@ -890,6 +939,7 @@ export class Screens {
   }
 
   report(): HTMLElement {
+    this.disposeOverlay();
     this.overlay.innerHTML = '';
     this.overlay.className = 'overlay dim report';
     const panel = el('div', { class: 'overlay-panel report-panel' });
