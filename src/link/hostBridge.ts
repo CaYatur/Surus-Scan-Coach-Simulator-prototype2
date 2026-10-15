@@ -1,12 +1,14 @@
 import { EVENT_META, type CoachEvent } from '../coach/types';
 import type { ReportData } from '../game/session';
-import { DeviceLink, savedLink } from './link';
+import { settings } from '../core/settings';
+import { experiment } from '../coach/experiment';
+import { DeviceLink, forgetSavedLink, savedLink } from './link';
 import { deviceName } from './device';
 import { eventGroup, type DisplayMsg, type HostMsg, type LinkEvent, type LinkReport, type LinkState, type LinkTelemetry } from './protocol';
 
 /** What the game exposes to the link. */
 export interface HostSource {
-  linkState(): LinkState;
+  linkState(): Omit<LinkState, 'feedback'>;
   linkTelemetry(): LinkTelemetry | null;
   remotePause(): void;
   remoteResume(): void;
@@ -29,6 +31,14 @@ export class HostBridge {
   private stateTimer = 0;
 
   constructor() {
+    // Experiment mode locks the phone link entirely (no feedback may reach a second screen)
+    experiment.on('change', () => {
+      if (experiment.active) this.disconnect();
+    });
+    // Hints switched off mid-drive: clear what the phone already shows
+    settings.on('change', ({ keys }) => {
+      if (keys.includes('liveCoachHints') && this.live) this.sendSnapshot();
+    });
     this.link.on('peer', () => {
       this.link.send({ t: 'hello', name: deviceName() });
       this.sendSnapshot();
@@ -58,12 +68,29 @@ export class HostBridge {
 
   attach(src: HostSource) {
     this.src = src;
+    // Only a pairing used within the last minutes is resumed (a page reload); on a shared
+    // computer an older one — the previous person's phone — is forgotten instead.
     const saved = savedLink();
-    if (saved?.role === 'host') this.link.start(saved.code);
+    if (saved?.role === 'host' && !experiment.active) this.link.start(saved.code);
+    else if (saved?.role === 'host') forgetSavedLink();
+  }
+
+  /** Whether pairing is possible right now (not in experiment mode). */
+  get allowed() {
+    return !experiment.active;
   }
 
   connect(code: string) {
+    if (!this.allowed) return;
     this.link.start(code);
+  }
+
+  /**
+   * Coaching content (events, notices, scores, reports) is forwarded only while live hints
+   * are on — the phone must not give feedback the PC screen is hiding.
+   */
+  private get feedbackOn() {
+    return settings.get().liveCoachHints && !experiment.active;
   }
 
   disconnect() {
@@ -79,11 +106,11 @@ export class HostBridge {
     if (this.events.length > MAX_EVENTS) this.events.shift();
     this.lastEventText = e.message;
     this.lastEventAt = performance.now();
-    if (this.live) this.link.send({ t: 'event', event: ev });
+    if (this.live && this.feedbackOn) this.link.send({ t: 'event', event: ev });
   }
 
   notice(text: string, kind: 'info' | 'good' | 'warn' | 'bad') {
-    if (!this.live) return;
+    if (!this.live || !this.feedbackOn) return;
     // Coaching events already toast their own message; send those once, as events
     if (text === this.lastEventText && performance.now() - this.lastEventAt < 1500) return;
     this.link.send({ t: 'notice', text, kind });
@@ -115,7 +142,7 @@ export class HostBridge {
     };
     if (this.live) {
       this.syncState();
-      this.link.send({ t: 'report', report: this.lastReport });
+      if (this.feedbackOn) this.link.send({ t: 'report', report: this.lastReport });
     }
   }
 
@@ -125,21 +152,32 @@ export class HostBridge {
     return this.link.status === 'connected';
   }
 
+  private state(): LinkState {
+    return { ...this.src!.linkState(), feedback: this.feedbackOn };
+  }
+
+  /** Live readout; the score fields are withheld while feedback is off. */
+  private telemetry(): LinkTelemetry | null {
+    const tele = this.src?.linkTelemetry() ?? null;
+    return tele && !this.feedbackOn ? { ...tele, overall: null, components: null, mirrorRate: 0 } : tele;
+  }
+
   private sendSnapshot() {
     if (!this.src) return;
-    const state = this.src.linkState();
+    const state = this.state();
+    const fb = state.feedback;
     this.lastState = JSON.stringify(state);
-    this.link.send({ t: 'snapshot', state, events: this.events.slice(-40), tele: this.src.linkTelemetry(), report: this.lastReport });
+    this.link.send({ t: 'snapshot', state, events: fb ? this.events.slice(-40) : [], tele: this.telemetry(), report: fb ? this.lastReport : null });
   }
 
   private sendTelemetry() {
-    const tele = this.src?.linkTelemetry();
+    const tele = this.telemetry();
     if (tele) this.link.send({ t: 'tele', tele });
   }
 
   private syncState() {
     if (!this.src) return;
-    const state = this.src.linkState();
+    const state = this.state();
     const key = JSON.stringify(state);
     if (key === this.lastState) return;
     this.lastState = key;

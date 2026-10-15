@@ -242,6 +242,11 @@ export class Pedestrians {
     this.peds.length = 0;
   }
 
+  /** Restart the random stream (session seed). */
+  reseed(seed: number) {
+    this.rng = mulberry32(seed);
+  }
+
   /** Spawn a pedestrian who suddenly crosses the road ahead of the player. */
   spawnJaywalker(player: PlayerInfo, dist: number): Pedestrian | null {
     const near = this.net.nearestLane(player.x, player.z, player.heading, 6);

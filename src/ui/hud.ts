@@ -47,6 +47,8 @@ export class Hud {
   private conditionsEl: HTMLElement;
   private lastMission = '';
   mode: HudMode = 'full';
+  /** False in the experiment's control condition: no score, coaching feed or scan coaching. */
+  private feedback = true;
   /** Mirrors every toast (used by the companion-display link). */
   onToast: ((text: string, kind: 'info' | 'good' | 'warn' | 'bad') => void) | null = null;
 
@@ -206,7 +208,7 @@ export class Hud {
   }
 
   setScores(c: Record<Component, number>, overall: number, show: boolean) {
-    if (!show) {
+    if (!show || !this.feedback) {
       this.scores.classList.add('hidden');
       return;
     }
@@ -226,7 +228,17 @@ export class Hud {
     this.conditionsEl.textContent = text;
   }
 
+  setFeedback(on: boolean) {
+    this.feedback = on;
+    this.root.classList.toggle('no-feedback', !on);
+    if (!on) {
+      this.feed.innerHTML = '';
+      this.scores.classList.add('hidden');
+    }
+  }
+
   pushEvent(e: CoachEvent) {
+    if (!this.feedback) return;
     if (e.severity === 'info' && e.kind !== 'reaction') return;
     const item = el('div', { class: `ev ev-${e.severity}` }, [el('span', { class: 'ev-i', text: SEV_ICON[e.severity] }), el('span', { text: e.message })]);
     this.feed.prepend(item);

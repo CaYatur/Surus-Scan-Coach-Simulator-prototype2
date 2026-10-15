@@ -19,7 +19,8 @@ export type LinkState = {
   mode: 'menu' | 'loading' | 'driving' | 'paused' | 'report';
   map: string;
   conditions: string;
-  profile: string | null;
+  /** False when live coaching hints are off on the PC: no events, scores or reports are sent. */
+  feedback: boolean;
   mission: LinkMission;
 };
 
@@ -61,7 +62,8 @@ export type HostMsg =
 
 export type DisplayMsg = { t: 'hello'; name: string } | { t: 'cmd'; cmd: 'pause' | 'resume' } | { t: 'bye' };
 
-export type Envelope<M> = { from: string; seq: number; hb?: true; m?: M };
+/** Plaintext inside the AES-GCM seal (see secure.ts). `ts` is the sender's wall clock (ms). */
+export type Envelope<M> = { from: string; seq: number; ts: number; hb?: true; m?: M };
 
 export type EventGroup = 'crash' | 'violation' | 'warning' | 'positive' | 'info';
 

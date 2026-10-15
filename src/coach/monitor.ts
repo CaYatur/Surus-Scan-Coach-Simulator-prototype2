@@ -93,7 +93,7 @@ export type MonitorStats = {
   emergency: { total: number; yielded: number };
 };
 
-function emptyStats(): MonitorStats {
+export function emptyStats(): MonitorStats {
   const m = (): ManeuverStats => ({ total: 0, signaled: 0, mirror: 0, shoulder: 0 });
   return {
     distance: 0,

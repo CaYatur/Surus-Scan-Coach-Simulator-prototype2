@@ -3211,3 +3211,80 @@ body.companion-on #app {
     flex: 1;
   }
 }
+
+/* ———————————————— experiment mode ———————————————— */
+/* Control condition: no score, coaching feed or scan coaching on the HUD */
+#hud.no-feedback .scores,
+#hud.no-feedback .feed,
+#hud.no-feedback .hud-bl .scan {
+  display: none !important;
+}
+.exp-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 16px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: rgba(171, 71, 188, 0.16);
+  border: 1px solid rgba(171, 71, 188, 0.5);
+  font-size: 14px;
+}
+.exp-banner b {
+  letter-spacing: 0.08em;
+}
+.exp-done {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  min-width: min(420px, 90vw);
+  text-align: center;
+}
+.exp-done h2 {
+  margin: 0;
+}
+.exp-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.exp-form input,
+.exp-form select {
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
+  font: 600 14px var(--font);
+}
+.exp-form input:disabled,
+.exp-form select:disabled {
+  opacity: 0.55;
+}
+.exp-lock {
+  color: var(--warn);
+  font-size: 13px;
+}
+@media (max-width: 760px) {
+  .exp-form {
+    grid-template-columns: 1fr;
+  }
+}
+.cmp-nofb {
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(245, 185, 66, 0.12);
+  border: 1px solid rgba(245, 185, 66, 0.4);
+  color: #f3d9a0;
+  font-size: 13px;
+}
+.cmp-scroll > .cmp-nofb {
+  grid-column: 1 / -1;
+}
+.menu-tile.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
