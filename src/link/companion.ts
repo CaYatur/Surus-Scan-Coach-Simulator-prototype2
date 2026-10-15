@@ -97,6 +97,7 @@ const STATUS_LABEL: Record<LinkStatus, string> = {
   waiting: 'Bilgisayar bekleniyor',
   connected: 'Bağlı',
   error: 'Sunucuya ulaşılamıyor — tekrar deneniyor',
+  unsupported: 'Güvenli bağlantı (HTTPS) gerekli',
 };
 
 function mmss(t: number): string {
@@ -134,6 +135,7 @@ export class Companion {
   private wakeLock: { release(): Promise<void> } | null = null;
   private alertTimer = 0;
   private ui!: {
+    nofb: HTMLElement;
     conn: HTMLElement;
     connText: HTMLElement;
     mode: HTMLElement;
@@ -382,11 +384,12 @@ export class Companion {
     const flash = el('div', { class: 'cmp-flash' });
     const wait = el('div', { class: 'cmp-wait hidden' });
 
-    const scroll = el('div', { class: 'cmp-scroll' }, [status, idle, reportBox, dash, comps, stats, counters, mission, feedBox]);
+    const nofb = el('section', { class: 'cmp-nofb hidden', text: '🔕 Bilgisayarda canlı koçluk ipuçları kapalı — uyarılar, puan ve rapor bu ekranda gösterilmez.' });
+    const scroll = el('div', { class: 'cmp-scroll' }, [status, nofb, idle, reportBox, dash, comps, stats, counters, mission, feedBox]);
     r.append(flash, top, scroll, foot, toasts, alert, wait);
     r.addEventListener('pointerdown', () => this.unlockAudio(), { passive: true });
 
-    this.ui = { conn, connText: conn.querySelector('span')!, mode, where, timer, speed, speedArc, limit, gear, sigL, sigR, scoreArc, scoreVal, grade, comps, counters, mission, reportBox, feed, chips, toasts, alert, flash, wait, idle, pauseBtn, toggles, stats };
+    this.ui = { nofb, conn, connText: conn.querySelector('span')!, mode, where, timer, speed, speedArc, limit, gear, sigL, sigR, scoreArc, scoreVal, grade, comps, counters, mission, reportBox, feed, chips, toasts, alert, flash, wait, idle, pauseBtn, toggles, stats };
     this.buildToggles();
     this.buildChips();
   }
@@ -466,8 +469,9 @@ export class Companion {
     const mode = st?.mode ?? 'menu';
     this.ui.mode.textContent = MODE_LABEL[mode];
     this.ui.mode.dataset.mode = mode;
-    this.ui.where.textContent = st && mode !== 'menu' ? `${st.map} · ${st.conditions}` : st?.profile ? `Sürücü: ${st.profile}` : '';
+    this.ui.where.textContent = st && mode !== 'menu' ? `${st.map} · ${st.conditions}` : '';
     this.root.dataset.mode = mode;
+    this.ui.nofb.classList.toggle('hidden', !st || st.feedback !== false);
     this.ui.idle.classList.toggle('hidden', mode !== 'menu' && mode !== 'loading');
     this.ui.pauseBtn.disabled = mode !== 'driving' && mode !== 'paused';
     this.ui.pauseBtn.textContent = mode === 'paused' ? '▶ Devam et' : '⏸ Duraklat';

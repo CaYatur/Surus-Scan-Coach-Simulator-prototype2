@@ -12,6 +12,7 @@ const HOST_STATUS: Record<LinkStatus, string> = {
   waiting: 'Telefon bekleniyor…',
   connected: 'Bağlı',
   error: 'Bağlantı sunucusuna ulaşılamıyor — tekrar deneniyor',
+  unsupported: 'Şifreli bağlantı için sayfa HTTPS (veya localhost) üzerinden açılmalı',
 };
 
 const DISPLAY_STATUS: Record<LinkStatus, string> = {
@@ -20,6 +21,7 @@ const DISPLAY_STATUS: Record<LinkStatus, string> = {
   waiting: 'Bilgisayarın QR kodu okutması bekleniyor',
   connected: 'Bilgisayara bağlandı',
   error: 'Bağlantı sunucusuna ulaşılamıyor — tekrar deneniyor',
+  unsupported: 'Şifreli bağlantı için sayfa HTTPS (veya localhost) üzerinden açılmalı',
 };
 
 /** Run `fn` on every status change for as long as `node` stays in the document. */
@@ -137,6 +139,11 @@ export function hostPairPanel(onClose: () => void): { root: HTMLElement; dispose
     ]);
     root.append(head);
 
+    if (!hostBridge.allowed) {
+      root.append(el('p', { class: 'exp-lock', text: '🔒 Deney modu açıkken telefon eşleşmesi kilitlidir.' }));
+      return;
+    }
+
     if (s === 'connected') {
       const names = [...hostBridge.displays.values()];
       root.append(
@@ -192,12 +199,12 @@ export function hostPairPanel(onClose: () => void): { root: HTMLElement; dispose
     };
 
     // manual code
-    const input = el('input', { class: 'code-input', placeholder: 'ABCD-EFGH', maxlength: 12, autocomplete: 'off', spellcheck: 'false' }) as HTMLInputElement;
+    const input = el('input', { class: 'code-input', placeholder: 'ABCDE-FGHJK', maxlength: 14, autocomplete: 'off', spellcheck: 'false' }) as HTMLInputElement;
     const codeMsg = el('small', { class: 'muted' });
     const submit = () => {
       const code = parseLinkCode(input.value);
       if (!code) {
-        codeMsg.textContent = 'Kod 8 karakter olmalı (ör. ABCD-EFGH).';
+        codeMsg.textContent = 'Kod 10 karakter olmalı (ör. ABCDE-FGHJK).';
         return;
       }
       connectTo(code);

@@ -6,6 +6,7 @@ import { formatTime, mean } from '../core/math';
 import { BADGES } from '../coach/profiles';
 import type { MapRenderer } from './mapRenderer';
 import type { StyleBaseline } from '../coach/metrics';
+import { sessionJson } from './sessionExport';
 
 const SEV_COLOR: Record<string, string> = { positive: '#4cd07d', info: '#6aa9ff', minor: '#f5b942', major: '#ff7a45', critical: '#f0544f' };
 
@@ -293,7 +294,7 @@ export function renderReport(host: HTMLElement, d: ReportData, map: MapRenderer,
     button('JSON', 'ghost', () =>
       download(
         'oturum.json',
-        JSON.stringify({ result: d.result, stats: d.stats, events: d.events, mission: d.mission ? { id: d.mission.def.id, success: d.mission.success, stars: d.mission.stars, lines: d.mission.lines } : null, conditions: d.conditions, map: d.mapName }, null, 2),
+        sessionJson(d),
         'application/json'
       )
     )

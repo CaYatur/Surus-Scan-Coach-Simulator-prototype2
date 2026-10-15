@@ -30,6 +30,9 @@ import { storage } from '../core/storage';
 import type { Companion } from '../link/companion';
 import { hostBridge } from '../link/hostBridge';
 import { displayPairCard, hostPairPanel, linkSettings } from '../link/pairUi';
+import { CONDITION_LABEL, clearSummaryLog, experiment, loggedSummaries, summaryCsv, validParticipant, type Condition } from '../coach/experiment';
+import type { ReportData } from '../game/session';
+import type { ReportActions } from './report';
 
 export interface AppApi {
   startSession(cfg: SessionConfig): void;
@@ -148,6 +151,19 @@ export class Screens {
   }
 
   private profileChip(): HTMLElement {
+    if (experiment.active) {
+      // Experiment: anonymous participant code instead of a named profile with its scores
+      const ex = experiment.get();
+      const chip = el('button', {
+        class: 'profile-chip',
+        html: `<span class="avatar" style="background:#8e44ad">🧪</span><span><b>${esc(ex.participant)}</b><small>Deney · ${esc(ex.condition === 'kontrol' ? 'Kontrol' : 'Geri bildirim')}</small></span>`,
+      });
+      chip.onclick = () => {
+        this.settingsTab = 'deney';
+        this.show('settings');
+      };
+      return chip;
+    }
     const p = activeProfile();
     const chip = el('button', {
       class: 'profile-chip',
@@ -177,11 +193,13 @@ export class Screens {
       tile('🚗', 'Serbest Sürüş', 'Şehirde dolaş, istediğin görevi seç', () => this.show('free'), 'primary'),
       tile('🎯', 'Görevler', 'Kalibrasyon, beceri ve şehir görevleri', () => this.show('missions')),
       tile(calibrated ? '✅' : '🧭', calibrated ? 'Kalibrasyonu Yenile' : 'Kalibrasyon Programı', calibrated ? 'Kişisel profilin hazır' : 'Önerilen ilk adım (~7 dk)', () => this.startMission('calibration')),
-      tile('📋', 'Sürücü Karnesi', p ? `${p.karne.sessions} oturum · ${p.badges.length} rozet` : 'Profil gerektirir', () => this.show('karne')),
+      experiment.feedbackHidden ? null : tile('📋', 'Sürücü Karnesi', p ? `${p.karne.sessions} oturum · ${p.badges.length} rozet` : 'Profil gerektirir', () => this.show('karne')),
       tile('⚙️', 'Ayarlar', 'Grafik, kontrol, direksiyon, tarama modu', () => this.show('settings')),
       tile('❓', 'Nasıl Oynanır', 'Kontroller ve puanlama', () => this.show('help')),
     ]);
-    if (!this.app.isPhone) {
+    if (!this.app.isPhone && experiment.active) {
+      tiles.append(tile('📱', 'Telefon Ekranı', 'Deney modunda kapalı (geri bildirim sızmasın)', () => undefined, 'link-tile disabled'));
+    } else if (!this.app.isPhone) {
       const st = hostBridge.link.status;
       const n = hostBridge.displays.size;
       tiles.append(
@@ -196,8 +214,17 @@ export class Screens {
           ? 'İpucu: Önce <b>Kalibrasyon Programı</b>\'nı tamamlayın — kişisel sürüş stiliniz çıkarılır ve sonraki sürüşler buna göre de yorumlanır.'
           : `Hoş geldin <b>${esc(p.name)}</b>. Son oturum: ${p.sessions[0] ? `${esc(p.sessions[0].missionTitle ?? (p.sessions[0].kind === 'free' ? 'Serbest sürüş' : p.sessions[0].kind))} — ${p.sessions[0].overall} puan` : '—'}`,
     });
-    const pair = this.app.isPhone ? displayPairCard(this.app.companion, true) : null;
-    const wrap = el('div', { class: 'main' }, [el('div', { class: 'main-top' }, [el('span'), this.profileChip()]), hero, pair, tiles, note, el('div', { class: 'version', text: 'v1.0 · Three.js · tarayıcıda çalışır, veriler cihazında kalır' })]);
+    const pair = this.app.isPhone && !experiment.active ? displayPairCard(this.app.companion, true) : null;
+    const ex = experiment.get();
+    const banner = experiment.active
+      ? el('div', { class: 'exp-banner', html: `<b>🧪 DENEY MODU</b><span>Katılımcı <b>${esc(ex.participant)}</b> · ${esc(CONDITION_LABEL[ex.condition])} · tohum ${ex.seed ?? 'rastgele'}</span>` })
+      : null;
+    // #7: data stays on the device — unless the phone screen is linked
+    const linked = hostBridge.link.active || this.app.companion.link.active;
+    const version = linked
+      ? 'v1.0 · Three.js · tarayıcıda çalışır · Telefon Ekranı açık: sürüş olayları şifreli olarak telefona aktarılıyor (diğer veriler cihazında kalır)'
+      : 'v1.0 · Three.js · tarayıcıda çalışır, veriler cihazında kalır (Telefon Ekranı kapalı)';
+    const wrap = el('div', { class: 'main' }, [el('div', { class: 'main-top' }, [el('span'), this.profileChip()]), hero, banner, pair, tiles, experiment.active ? null : note, el('div', { class: 'version', text: version })]);
     return wrap;
   }
 
@@ -518,6 +545,7 @@ export class Screens {
       ['ses', 'Ses'],
       ['koc', 'Koçluk'],
       ['baglanti', 'Telefon Ekranı'],
+      ['deney', 'Deney'],
       ['veri', 'Veri'],
     ];
     const bar = el('div', { class: 'seg tabs-big' });
@@ -544,7 +572,10 @@ export class Screens {
     const s = settings.get();
     switch (tab) {
       case 'baglanti':
+        if (experiment.active) return [el('p', { class: 'exp-lock', text: '🔒 Deney modu açıkken telefon eşleşmesi kilitlidir (kontrol grubuna geri bildirim sızmaması için). Deney sekmesinden kapatabilirsiniz.' })];
         return linkSettings(this.app.companion, () => this.linkPanel(), this.app.isPhone);
+      case 'deney':
+        return this.experimentSettings(redraw);
       case 'grafik': {
         const seg = el('div', { class: 'seg quality' });
         const names: Record<QualityLevel, string> = { low: 'Düşük', medium: 'Orta', high: 'Yüksek', ultra: 'Ultra' };
@@ -756,6 +787,105 @@ export class Screens {
     }
   }
 
+  private experimentSettings(redraw: () => void): HTMLElement[] {
+    const ex = experiment.get();
+    const locked = experiment.locked;
+    const msg = el('small', { class: 'muted' });
+    const part = el('input', { value: ex.participant, placeholder: 'ör. P012', maxlength: 16, spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+    const cond = el('select') as HTMLSelectElement;
+    for (const c of ['feedback', 'kontrol'] as Condition[]) cond.append(el('option', { value: c, text: CONDITION_LABEL[c] }));
+    cond.value = ex.condition;
+    const seed = el('input', { value: ex.seed ?? '', placeholder: 'boş = her oturum rastgele', inputmode: 'numeric' }) as HTMLInputElement;
+    for (const i of [part, cond, seed]) {
+      i.disabled = locked;
+      i.onkeydown = (e) => e.stopPropagation();
+    }
+    const save = (patch: Parameters<typeof experiment.update>[0]) => {
+      if (!experiment.update(patch)) msg.textContent = locked ? 'Oturum sürerken değiştirilemez.' : 'Geçersiz değer (katılımcı kodu: 1–16 harf/rakam, - veya _).';
+      else {
+        if (experiment.active) hostBridge.disconnect();
+        redraw();
+      }
+    };
+    part.onchange = () => {
+      const v = part.value.trim();
+      if (v && !validParticipant(v)) {
+        msg.textContent = 'Katılımcı kodu yalnızca harf, rakam, - ve _ içerebilir (en fazla 16). Gerçek isim girmeyin.';
+        return;
+      }
+      save(v ? { participant: v } : { participant: '', enabled: false });
+    };
+    cond.onchange = () => save({ condition: cond.value as Condition });
+    seed.onchange = () => {
+      const v = seed.value.trim();
+      const n = Number(v);
+      if (v && (!Number.isInteger(n) || n < 1 || n > 4294967295)) {
+        msg.textContent = 'Tohum 1 ile 4294967295 arasında bir tam sayı olmalı.';
+        return;
+      }
+      save({ seed: v ? n : null });
+    };
+    const toggle = (label: string, key: 'enabled' | 'autoExport', desc: string) => {
+      const inp = el('input', { type: 'checkbox' }) as HTMLInputElement;
+      inp.checked = ex[key];
+      inp.disabled = locked;
+      inp.onchange = () => {
+        if (key === 'enabled' && inp.checked && !validParticipant(part.value.trim())) {
+          inp.checked = false;
+          msg.textContent = 'Deney modunu açmak için önce anonim bir katılımcı kodu girin.';
+          return;
+        }
+        save(key === 'enabled' && inp.checked ? { enabled: true, participant: part.value.trim() } : { [key]: inp.checked });
+      };
+      return el('label', { class: 'toggle-row' }, [el('div', {}, [el('b', { text: label }), el('small', { text: desc })]), el('span', { class: 'switch' }, [inp, el('i')])]);
+    };
+    const rows = loggedSummaries();
+    return [
+      el('p', {
+        class: 'muted',
+        html: 'Pilot çalışma (koçluk açık / kapalı) için. <b>Kontrol</b> koşulunda canlı puan, koçluk uyarıları, tarama göstergesi ve oturum sonu raporu <b>gösterilmez</b>; sürüş yine izlenir ve telemetri kaydedilir. Telefon eşleşmesi deney boyunca kilitlidir ve oturumlar profillerin karnesine yazılmaz.',
+      }),
+      el('p', { class: locked ? 'exp-lock' : 'hidden', text: '🔒 Oturum sürüyor — katılımcı kodu, koşul ve tohum oturum bitene kadar kilitli.' }),
+      toggle('Deney modu', 'enabled', experiment.active ? 'Açık' : 'Kapalı'),
+      el('div', { class: 'exp-form' }, [
+        el('div', { class: 'field' }, [el('label', { text: 'Katılımcı kodu (anonim)' }), part]),
+        el('div', { class: 'field' }, [el('label', { text: 'Koşul' }), cond]),
+        el('div', { class: 'field' }, [el('label', { text: 'Oturum tohumu (trafik/yaya)' }), seed]),
+      ]),
+      msg,
+      toggle('Oturum sonunda otomatik dışa aktar', 'autoExport', 'Telemetri CSV + oturum JSON + tek satırlık deney özeti CSV indirilir'),
+      el('div', { class: 'row' }, [
+        this.btn(`Tüm deney özetlerini indir (${rows.length} oturum)`, 'primary', () => download(`deney-ozetleri-${new Date().toISOString().slice(0, 10)}.csv`, summaryCsv(loggedSummaries()), 'text/csv')),
+        this.btn('Özet kaydını temizle', 'ghost', () => {
+          if (confirm('Bu tarayıcıdaki tüm deney özet satırları silinsin mi? (İndirilmiş dosyalar etkilenmez.)')) {
+            clearSummaryLog();
+            redraw();
+          }
+        }),
+      ]),
+      el('p', {
+        class: 'muted small',
+        html: 'Özet sütunları: manevra öncesi doğru ayna kontrolü oranı (<code>scan_before_maneuver_rate</code>), en uzun aynasız süre (<code>max_mirror_gap_s</code>), TTC ramak kala sayısı ve en düşük TTC, hız ihlali süresi, çarpışma, kırmızı ışık, genel puan ve görev başarısı. Her satırda katılımcı kodu, koşul, görev ve tohum bulunur.',
+      }),
+    ];
+  }
+
+  /** Control condition end of a drive: no score or report, files are exported in the background. */
+  experimentDone(d: ReportData, actions: ReportActions) {
+    const ex = experiment.get();
+    const box = el('div', { class: 'exp-done' }, [
+      el('h2', { text: 'Oturum tamamlandı' }),
+      el('p', { class: 'muted', text: `Katılımcı ${ex.participant} · ${d.mission ? d.mission.def.title : 'Serbest sürüş'} · ${Math.round(d.result.durationSec / 60)} dk` }),
+      el('p', { text: 'Teşekkürler! Lütfen araştırmacının yönergesini bekleyin.' }),
+      el('div', { class: 'row' }, [
+        actions.onContinue ? this.btn('Sürüşe devam et', 'primary', actions.onContinue) : null,
+        actions.onRetry ? this.btn(d.mission ? 'Görevi tekrarla' : 'Yeniden başlat', '', actions.onRetry) : null,
+        this.btn('Ana menü', '', actions.onMenu),
+      ]),
+    ]);
+    this.openOverlay(box, 'dim');
+  }
+
   private detectAxis(key: 'wheelSteerAxis' | 'wheelThrottleAxis' | 'wheelBrakeAxis', sel: HTMLSelectElement) {
     const base = Input.padAxes();
     if (!base) {
@@ -857,7 +987,7 @@ export class Screens {
         this.closeOverlay();
         this.show('settings');
       }),
-      this.btn(hostBridge.link.status === 'connected' ? '📱 Telefon bağlı' : '📱 Telefonu bağla', '', () => this.linkPanel()),
+      hostBridge.allowed ? this.btn(hostBridge.link.status === 'connected' ? '📱 Telefon bağlı' : '📱 Telefonu bağla', '', () => this.linkPanel()) : null,
       this.btn('Nasıl oynanır', '', () => {
         this.closeOverlay();
         this.show('help');

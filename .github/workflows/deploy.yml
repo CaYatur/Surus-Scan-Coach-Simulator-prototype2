@@ -1,0 +1,48 @@
+name: Test ve GitHub Pages yayını
+
+# main'e her birleştirmede: tip denetimi + birim testleri + derleme, ardından dist/
+# gh-pages dalına yayınlanır (Pages ayarı "Deploy from a branch: gh-pages" olarak kalır).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+      - name: Derle (tsc + vite)
+        run: npm run build
+        env:
+          # İsteğe bağlı: depo değişkeni olarak kurum içi MQTT sunucusu (ör. wss://mqtt.okul.edu.tr/mqtt)
+          VITE_LINK_BROKER: ${{ vars.VITE_LINK_BROKER }}
+
+      - name: gh-pages dalına yayınla
+        if: github.event_name != 'pull_request'
+        run: |
+          touch dist/.nojekyll
+          cd dist
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "deploy: ${GITHUB_SHA::7}"
+          git push -q --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" gh-pages

@@ -16,7 +16,8 @@ import { hostBridge, type HostSource } from './link/hostBridge';
 import { isPhoneLike } from './link/device';
 import { parseLinkCode } from './link/link';
 import type { LinkState, LinkTelemetry } from './link/protocol';
-import { activeProfile } from './coach/profiles';
+import { experiment } from './coach/experiment';
+import { exportExperimentSession, telemetryCsv } from './ui/sessionExport';
 import { TIME_LABEL, WEATHER_LABEL } from './world/environment';
 
 type Mode = 'menu' | 'loading' | 'driving';
@@ -86,16 +87,21 @@ class App implements AppApi, HostSource {
     window.addEventListener('pointerdown', unlock);
     window.addEventListener('keydown', unlock);
     hostBridge.attach(this);
-    // A phone that opened the PC's pairing link (?baglan=CODE) or was paired before goes straight to the dashboard
-    const params = new URLSearchParams(location.search);
-    const joinCode = params.get('baglan') ? parseLinkCode(params.get('baglan')!) : null;
-    if (params.has('baglan')) {
-      params.delete('baglan');
-      const q = params.toString();
-      history.replaceState(null, '', location.pathname + (q ? `?${q}` : '') + location.hash);
+    // A phone that opened the PC's pairing link (#baglan=CODE) or was paired minutes ago goes straight to the dashboard
+    const hash = new URLSearchParams(location.hash.slice(1));
+    const search = new URLSearchParams(location.search);
+    const rawJoin = hash.get('baglan') ?? search.get('baglan');
+    const joinCode = rawJoin && !experiment.active ? parseLinkCode(rawJoin) : null;
+    if (rawJoin != null) {
+      // Drop the code from the address bar / history
+      hash.delete('baglan');
+      search.delete('baglan');
+      const q = search.toString();
+      const h = hash.toString();
+      history.replaceState(null, '', location.pathname + (q ? `?${q}` : '') + (h ? `#${h}` : ''));
     }
     if (joinCode) this.companion.join(joinCode);
-    else if (this.companion.resumeSaved()) this.companion.open();
+    else if (!experiment.active && this.companion.resumeSaved()) this.companion.open();
     // (after the link resume above: the phone's main-menu QR card starts a fresh pairing otherwise)
     this.screens.show('main');
     // Build the city in the background for the animated menu (deferred while the dashboard is up).
@@ -147,6 +153,12 @@ class App implements AppApi, HostSource {
 
   startSession(cfg: SessionConfig) {
     audio.unlock();
+    // Experiment: identity/condition are frozen for the drive; a fixed seed repeats the traffic
+    if (experiment.active) {
+      experiment.locked = true;
+      const seed = experiment.get().seed;
+      cfg = { ...cfg, seed: seed ?? undefined };
+    } else cfg = { ...cfg, seed: undefined };
     this.screens.hideMenus();
     this.screens.closeOverlay();
     this.mode = 'loading';
@@ -210,6 +222,7 @@ class App implements AppApi, HostSource {
     this.hud.setVisible(false);
     this.screens.closeOverlay();
     this.mode = 'menu';
+    experiment.locked = false;
     this.useMenuBackground();
     this.screens.show('main');
   }
@@ -268,8 +281,8 @@ class App implements AppApi, HostSource {
     hostBridge.report(d);
     s.setPaused(true);
     this.hud.setVisible(false);
-    const panel = this.screens.report();
-    renderReport(panel, d, s.bundle.mapRenderer, {
+    if (experiment.active) exportExperimentSession(d, s.csv(), experiment.get().autoExport);
+    const actions = {
       onContinue: () => {
         this.screens.closeOverlay();
         s.continueFree();
@@ -285,23 +298,24 @@ class App implements AppApi, HostSource {
         }
       },
       onMenu: () => this.quitToMenu(),
-      csv: () => s.csv(),
-    });
+      csv: () => telemetryCsv(d, s.csv()),
+    };
+    // Control condition: no scores or report — just a neutral end screen (files are still exported)
+    if (s.quiet) this.screens.experimentDone(d, actions);
+    else renderReport(this.screens.report(), d, s.bundle.mapRenderer, actions);
   }
 
   // ——————————————————————————— companion link (HostSource) ———————————————————————————
 
-  linkState(): LinkState {
+  linkState(): Omit<LinkState, 'feedback'> {
     const s = this.session;
-    const profile = activeProfile()?.name ?? null;
-    if (this.mode !== 'driving' || !s) return { mode: this.mode === 'loading' ? 'loading' : 'menu', map: '', conditions: '', profile, mission: null };
+    if (this.mode !== 'driving' || !s) return { mode: this.mode === 'loading' ? 'loading' : 'menu', map: '', conditions: '', mission: null };
     const env = s.bundle.env;
     const r = s.runner;
     return {
       mode: s.ended ? 'report' : s.paused ? 'paused' : 'driving',
       map: s.bundle.map.name,
       conditions: `${TIME_LABEL[env.time]} · ${WEATHER_LABEL[env.weather]}`,
-      profile,
       mission: r ? { icon: r.def.icon, title: r.def.title, subtitle: r.def.subtitle, objectives: r.objectives().map((o) => ({ title: o.title, status: o.status })) } : null,
     };
   }

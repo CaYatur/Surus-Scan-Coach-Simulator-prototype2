@@ -3,7 +3,7 @@
 Tarayıcıda çalışan, **güvenli sürüş ve tarama (ayna / omuz kontrolü) alışkanlıklarını ölçen ve koçluk yapan** 3B sürüş simülatörü.
 Gerçek trafik kurallarına yakın bir şehirde sürersin; her oturumun sonunda ayrıntılı bir rapor alırsın ve puanların kişisel **Sürücü Karnesi**'ne işlenir.
 
-> Vite + TypeScript + Three.js · harici görsel/ses dosyası yok (tüm modeller, dokular ve sesler prosedürel olarak üretilir) · veriler cihazda (localStorage) kalır.
+> Vite + TypeScript + Three.js · harici görsel/ses dosyası yok (tüm modeller, dokular ve sesler prosedürel olarak üretilir) · veriler cihazda (localStorage) kalır — yalnızca Telefon Ekranı eşleştirildiğinde sürüş olayları şifreli olarak telefona aktarılır.
 
 ## Hızlı başlangıç
 
@@ -12,7 +12,10 @@ npm install
 npm run dev        # http://localhost:5173
 npm run build      # dist/ — göreli yollar, herhangi bir alt dizinde/statik hostta çalışır
 npm run preview    # build önizleme (http://localhost:4173)
+npm test           # birim testleri (Vitest)
 ```
+
+`main` dalına her birleştirmede GitHub Actions (`.github/workflows/deploy.yml`) testleri ve derlemeyi çalıştırır, ardından `dist/`'i `gh-pages` dalına yayınlar (GitHub Pages bu daldan sunulur). PR'larda yalnızca test + derleme çalışır.
 
 Mutlak bir taban yol gerekirse: `VITE_BASE=/scan-coach/ npm run build`.
 
@@ -99,7 +102,27 @@ Oyunu bilgisayarda oynarken telefonu **canlı uyarı ekranı** olarak bağlayın
 3. Telefon tam ekran **Canlı Koç** paneline geçer: hız göstergesi + hız sınırı levhası, vites ve sinyaller, canlı puan halkası ve 5 bileşen, kaza / ihlal / uyarı / olumlu sayaçları, görev hedefleri, filtrelenebilir olay akışı, oturum bitince rapor kartı.
    Kaza ve ciddi ihlallerde ekran renkli yanıp söner, büyük uyarı kartı çıkar; isteğe göre **titreşim, ses ve Türkçe sesli okuma**. Telefondan oyunu **duraklatıp devam ettirebilirsiniz**. Ekran açık tutulur (Wake Lock); sayfa yenilense de eşleşme hatırlanır.
 
-Teknik: site statik olduğu için cihazlar herkese açık MQTT-over-WebSocket sunucuları (EMQX, HiveMQ, Mosquitto — hangisi erişilebilirse) üzerinden, rastgele eşleşme koduna ait kanalda haberleşir (`src/link/`). Yalnızca sürüş olayları, puanlar ve hız gibi veriler gönderilir. Kendi sunucunuz için Ayarlar → Telefon Ekranı → Gelişmiş'e `wss://…` adresi girin (iki cihazda da aynı). Bilgisayar kamerası yalnızca HTTPS veya `localhost` üzerinde açılır; yerel ağda `npm run dev` ile denerken telefonda “Network” adresini açın.
+**Güvenlik ve gizlilik**
+- Site statik olduğu için cihazlar MQTT-over-WebSocket sunucuları üzerinden haberleşir (`src/link/`). Varsayılan olarak herkese açık sunucular (EMQX, HiveMQ, Mosquitto — hangisi erişilebilirse) kullanılır; **okul/deney kullanımı için kurum içi sunucu önerilir:** derlemede `VITE_LINK_BROKER=wss://… npm run build` (GitHub Actions'ta depo değişkeni `VITE_LINK_BROKER`) veya Ayarlar → Telefon Ekranı → Gelişmiş.
+- **Uçtan uca şifreleme:** 10 karakterlik eşleşme kodu hiç gönderilmez; PBKDF2 ile ondan anlamsız bir kanal adı ve ayrı bir AES-GCM anahtarı türetilir. Tüm mesajlar şifreli ve kimlik doğrulamalıdır; sahte veya değiştirilmiş mesajlar (ör. sahte “duraklat” komutu) reddedilir, zaman damgası + sıra numarası tekrar oynatmayı engeller. QR bağlantısında kod URL'nin `#` kısmındadır (sunucuya gitmez).
+- WebCrypto yalnızca güvenli bağlamda çalışır: sayfa **HTTPS veya `localhost`** üzerinden açılmalıdır (GitHub Pages uygundur); aksi halde eşleşme açılmaz, düz metne geri düşülmez.
+- Telefona **profil adı gönderilmez**. Bilgisayarda canlı ipuçları kapalıysa telefona olay, puan ve rapor da gönderilmez (yalnızca hız/durum). Deney modunda eşleşme tamamen kilitlidir.
+- Kayıtlı eşleşme yalnızca son **15 dakika** içinde kullanıldıysa (ör. sayfa yenileme) kendiliğinden sürer; daha eskisi unutulur — paylaşılan bilgisayarda önceki kişinin telefonu bağlı kalmaz.
+
+### 🧪 Deney modu (pilot çalışma: koçluk açık / kapalı)
+Ayarlar → **Deney**: anonim **katılımcı kodu** (ör. `P012`, gerçek isim kabul edilmez), **koşul** (Geri bildirim / Kontrol) ve isteğe bağlı sabit **oturum tohumu** (aynı tohum = aynı trafik ve yaya akışı). Sürüş sırasında bu alanlar kilitlidir.
+- **Kontrol** koşulunda HUD puanı, koçluk uyarıları (yazılı ve sesli), olay akışı, tarama göstergesi, sürücü karnesi ve oturum sonu raporu gösterilmez; oturum sonunda yalnızca nötr bir “Oturum tamamlandı” ekranı çıkar. Sürüş yine izlenir, telemetri kaydedilir.
+- Deney oturumları adlı profillerin karnesine yazılmaz; telefon eşleşmesi kilitlidir.
+- Oturum sonunda **otomatik dışa aktarım** (kapatılabilir): `P012_kontrol_<görev>_<zaman>_telemetri.csv` (her satırda katılımcı, koşul, görev, tohum), `_oturum.json` (`meta` alanıyla) ve tek satırlık `_ozet.csv`.
+- **Deney özeti CSV** sütunları: `scan_before_maneuver_rate` (manevra öncesi doğru ayna kontrolü oranı), `max_mirror_gap_s`, `near_miss_ttc_count`, `min_ttc_s`, `speeding_time_s`, `speeding_severe_time_s`, çarpışma, kırmızı ışık, genel puan, görev başarısı. Tüm oturumların özet satırları tarayıcıda da saklanır: Ayarlar → Deney → “Tüm deney özetlerini indir”.
+
+### ✅ Testler
+`npm test` (Vitest) — `tests/`:
+- **TTC / ramak kala:** TTC hesabı, 1,6 / 0,9 sn eşikleri, 6 sn tekrar sayılmama, uzaklaşan/uzak/yavaş durumlar.
+- **Şerit değişimi tespiti:** gerçek şehir yol ağı üzerinde ayna+sinyal ile doğru manevra, sinyalsiz/aynasız ihlal, geç sinyal; yanlış pozitif koruması (şerit içinde yalpalama, çizgiyi kısa süre aşıp dönme, düşük hız, yeni şeritte tutunmadan dönme).
+- **Tarama penceresi:** ayna kontrol penceresi, “tek tuş” modu, `maxGap`, ayna/dk oranı.
+- **Puan:** 5 bileşen ağırlıkları, ağırlıklı genel puan, ağır ihlal tavanları (yaya 20, ağır kaza 40, kırmızı ışık 72, …).
+- **Deney dışa aktarımı** ve **Canlı Koç şifrelemesi** (anahtar türetme, kurcalama/ters yön reddi, tekrar oynatma koruması).
 
 ### Grafik
 Gökyüzü + güneş/ay, gölgeler, PBR malzemeler, ortam yansımaları, bloom, FXAA/SMAA, zaman (sabah/öğle/gün batımı/gece) ve hava (açık/bulutlu/yağmur/sis). Gece aydınlatılmış pencereler, sokak lambası ışık havuzları ve gerçek far ışıkları.
@@ -135,8 +158,9 @@ src/
   coach/      olay tespiti, tarama takibi, telemetri, puanlama, profil/karne
   game/       oturum (ana döngü) ve harita paketi
   ui/         HUD, menüler, rapor, grafikler, harita çizimi
-  link/       telefon ⇄ bilgisayar bağlantısı (MQTT/WebSocket), QR üretme/okuma, Canlı Koç ekranı
+  link/       telefon ⇄ bilgisayar bağlantısı (MQTT/WebSocket, uçtan uca şifreli), QR, Canlı Koç ekranı
   audio/      sentezlenmiş sesler + Türkçe sesli yönlendirme
+tests/        Vitest birim testleri
 ```
 
 ## Notlar

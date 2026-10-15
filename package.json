@@ -9,7 +9,8 @@
     "start": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "jsqr": "^1.4.0",
@@ -22,6 +23,7 @@
   "devDependencies": {
     "@types/three": "^0.186.0",
     "typescript": "^7.0.2",
-    "vite": "^8.3.1"
+    "vite": "^8.3.1",
+    "vitest": "4.1.11"
   }
 }

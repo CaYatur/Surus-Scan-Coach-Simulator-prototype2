@@ -302,6 +302,11 @@ export class AITraffic {
     this.trailerColors.clear();
   }
 
+  /** Restart the random stream (session seed: the same seed gives the same traffic). */
+  reseed(seed: number) {
+    this.rng = mulberry32(seed);
+  }
+
   /** Put a car in the player's lane ahead (used by missions / surprise events). */
   spawnAhead(player: PlayerInfo, dist: number, speedFactor = 0.7, type?: CarType): AICar | null {
     const near = this.net.nearestLane(player.x, player.z, player.heading, 8);

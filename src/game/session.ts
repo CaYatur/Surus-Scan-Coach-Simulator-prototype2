@@ -25,6 +25,7 @@ import { CURB_H } from '../world/roadNetwork';
 import type { Contact } from '../world/colliders';
 import type { AICar, PlayerInfo } from '../traffic/aiTraffic';
 import type { LinkTelemetry } from '../link/protocol';
+import { experiment, newSeed, type SessionMeta } from '../coach/experiment';
 
 export type SessionConfig = {
   mapId: 'training' | 'city';
@@ -34,6 +35,8 @@ export type SessionConfig = {
   weather: Weather;
   traffic: number;
   peds: number;
+  /** Traffic/pedestrian random seed; omitted = a fresh random seed. */
+  seed?: number;
 };
 
 export type ReportData = {
@@ -46,6 +49,8 @@ export type ReportData = {
   mapId: 'training' | 'city';
   conditions: string;
   karne: KarneUpdate | null;
+  /** Participant / condition / mission / seed of this segment (exports). */
+  meta: SessionMeta;
   profileName: string | null;
   baseline: StyleBaseline | null;
   scan: { rate: number; maxGap: number; glances: number; shoulder: number };
@@ -74,6 +79,13 @@ export class Session implements MissionHost {
   readonly telemetry = new Telemetry();
   runner: MissionRunner | null = null;
   segment: SegmentKind = 'free';
+  /** Seed of this drive's traffic and pedestrians (same seed → same traffic). */
+  readonly seed: number;
+  /** Experiment control condition: no score, coaching toasts, coach audio or report. */
+  readonly quiet: boolean;
+  /** Snapshot of the experiment identity at the start of the drive (it is locked meanwhile). */
+  private readonly exp: { participant: string; condition: SessionMeta['condition'] };
+  private segStartedAt = new Date();
   /** Observers for the companion-display link. */
   onCoach: ((e: CoachEvent) => void) | null = null;
   onSegment: (() => void) | null = null;
@@ -129,6 +141,11 @@ export class Session implements MissionHost {
     this.hud = deps.hud;
     this.ui = deps.ui;
     this.q = deps.quality;
+    this.seed = cfg.seed ?? newSeed();
+    this.quiet = experiment.feedbackHidden;
+    const ex = experiment.get();
+    this.exp = experiment.active ? { participant: ex.participant, condition: ex.condition } : { participant: '', condition: '' };
+    this.hud.setFeedback(!this.quiet);
     const s = settings.get();
     this.dyn = new VehicleDynamics(PARAMS[s.playerCar]);
     this.car = new PlayerCar(s.playerCar, s.playerColor);
@@ -242,6 +259,8 @@ export class Session implements MissionHost {
     this.dyn.reset(sp.x, sp.z, sp.heading);
     this.car.sync(this.dyn, this.lights, 0, b.env.nightFactor);
     this.updatePlayerInfo();
+    b.traffic.reseed(this.seed);
+    b.peds.reseed((this.seed ^ 0x5bd1e995) >>> 0 || 7);
     b.traffic.populate(this.playerInfo, true);
     b.peds.populate(sp.x, sp.z, true);
     this.pipeline.setBloom(0.35 + b.env.nightFactor * 0.55);
@@ -254,6 +273,7 @@ export class Session implements MissionHost {
     this.monitor.reset();
     this.telemetry.reset();
     this.segStart = this.elapsed;
+    this.segStartedAt = new Date();
     this.trail = [];
     this.live = null;
     this.hardCrashAt = -1;
@@ -326,6 +346,7 @@ export class Session implements MissionHost {
   private onCoachEvent(e: CoachEvent) {
     this.hud.pushEvent(e);
     this.onCoach?.(e);
+    if (this.quiet) return;
     const s = settings.get();
     if (e.severity === 'critical' || e.severity === 'major') {
       if (s.liveCoachHints) this.hud.toast(e.message, 'bad', 3500);
@@ -756,7 +777,7 @@ export class Session implements MissionHost {
     if (hard) {
       this.hardCrashAt = this.elapsed;
       this.lights.hazard = true;
-      this.hud.toast('AĞIR KAZA', 'bad', 3000);
+      if (!this.quiet) this.hud.toast('AĞIR KAZA', 'bad', 3000);
     }
   }
 
@@ -906,7 +927,7 @@ export class Session implements MissionHost {
         );
       }
       hud.meter(this.meterState?.label ?? null, this.meterState?.v ?? 0);
-      hud.setStats(segT, this.monitor.stats.distance, `${this.monitor.scan.rate().toFixed(1)} ayna/dk`);
+      hud.setStats(segT, this.monitor.stats.distance, this.quiet ? '' : `${this.monitor.scan.rate().toFixed(1)} ayna/dk`);
       if (this.fpsN > 0 && s.showFps) hud.setFps(this.fpsN / this.fpsAcc);
       else hud.setFps(null);
       if (this.fpsAcc > 1) {
@@ -973,7 +994,8 @@ export class Session implements MissionHost {
     const profile = activeProfile();
     let karne: KarneUpdate | null = null;
     const durationSec = this.elapsed - this.segStart;
-    if (profile && durationSec > 25) {
+    // Experiment sessions stay anonymous: nothing is written to a named profile's karne
+    if (profile && durationSec > 25 && !this.exp.participant) {
       const man = st.turns.total + st.laneChanges.total;
       const summary: SessionSummary = {
         id: Math.random().toString(36).slice(2),
@@ -1016,11 +1038,24 @@ export class Session implements MissionHost {
       mapId: b.map.id,
       conditions,
       karne,
-      profileName: profile?.name ?? null,
+      profileName: this.exp.participant ? null : (profile?.name ?? null),
       baseline: profile?.baseline.ready ? profile.baseline : null,
       scan: { rate: this.monitor.scan.rate(), maxGap: this.monitor.scan.maxGap, glances: this.monitor.scan.count(), shoulder: this.monitor.scan.count('shoulderL') + this.monitor.scan.count('shoulderR') },
       at: Date.now(),
+      meta: this.meta(),
     });
+  }
+
+  /** Identity of the current segment for exports. */
+  meta(): SessionMeta {
+    return {
+      participant: this.exp.participant,
+      condition: this.exp.condition,
+      mission: this.runner?.def.id ?? 'serbest',
+      seed: this.seed,
+      map: this.bundle.map.id,
+      startedAt: this.segStartedAt.toISOString(),
+    };
   }
 
   /** Live readout for the companion display. */

@@ -2,27 +2,42 @@ import { Emitter } from '../core/emitter';
 import { storage } from '../core/storage';
 import { MqttClient } from './mqtt';
 import type { Envelope } from './protocol';
+import { deriveKeys, ReplayGuard, seal, secureSupported, unseal, type PairKeys } from './secure';
 
 /**
- * Device-to-device link (game PC ⇄ companion phone) through public MQTT-over-WebSocket
- * brokers. Both sides connect to every broker in the list and talk on a topic derived
- * from a random pairing code; once the peer is heard, messages go through the broker
- * that last delivered from it. Messages carry sender id + sequence number, so the same
- * message arriving through several brokers is handled once.
+ * Device-to-device link (game PC ⇄ companion phone) through MQTT-over-WebSocket brokers.
+ * Both sides connect to every broker in the list and talk on a topic derived from a
+ * random pairing code; once the peer is heard, messages go through the broker that last
+ * delivered from it. Every message is end-to-end encrypted and authenticated with a key
+ * derived from the code (secure.ts), and carries sender id + sequence number + time so
+ * the same message arriving through several brokers — or replayed — is handled once.
  */
 
 export type LinkRole = 'host' | 'display';
-export type LinkStatus = 'off' | 'connecting' | 'waiting' | 'connected' | 'error';
+export type LinkStatus = 'off' | 'connecting' | 'waiting' | 'connected' | 'error' | 'unsupported';
 
-export const DEFAULT_BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt'];
+const PUBLIC_BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt'];
 
-const TOPIC_ROOT = 'surus-kocu/v1';
-const STORE_KEY = 'ssc-link-v1';
+/**
+ * Build-time override (`VITE_LINK_BROKER=wss://… npm run build`, comma separated) — the
+ * recommended setup for schools/experiments: an institution-run broker instead of public ones.
+ */
+const BUILD_BROKERS = (import.meta.env?.VITE_LINK_BROKER ?? '')
+  .split(',')
+  .map((b: string) => b.trim())
+  .filter(Boolean);
+
+export const DEFAULT_BROKERS: string[] = BUILD_BROKERS.length ? BUILD_BROKERS : PUBLIC_BROKERS;
+
+const TOPIC_ROOT = 'surus-kocu/v2';
+const STORE_KEY = 'ssc-link-v2';
 const CUSTOM_BROKER_KEY = 'ssc-link-broker';
 const HEARTBEAT_MS = 4000;
 const PEER_TIMEOUT_MS = 13000;
+/** A remembered pairing is resumed after a reload only if it was in use this recently. */
+export const RESUME_WINDOW_MS = 15 * 60 * 1000;
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-export const CODE_LENGTH = 8;
+export const CODE_LENGTH = 10;
 
 export function newLinkCode(): string {
   const r = new Uint32Array(CODE_LENGTH);
@@ -31,7 +46,7 @@ export function newLinkCode(): string {
 }
 
 export function formatCode(code: string): string {
-  return code.slice(0, 4) + '-' + code.slice(4);
+  return code.slice(0, 5) + '-' + code.slice(5);
 }
 
 /** Pull a pairing code out of a scanned QR text (link URL) or a typed code. */
@@ -39,7 +54,8 @@ export function parseLinkCode(text: string): string | null {
   let raw = text.trim();
   try {
     const u = new URL(raw);
-    raw = u.searchParams.get('baglan') ?? '';
+    // The code travels in the fragment, so it never reaches the web server's logs
+    raw = new URLSearchParams(u.hash.slice(1)).get('baglan') ?? u.searchParams.get('baglan') ?? '';
   } catch {
     /* not a URL — treat as a typed code */
   }
@@ -51,7 +67,7 @@ export function parseLinkCode(text: string): string | null {
 
 /** The URL a phone camera opens to join as the companion display. */
 export function linkUrl(code: string): string {
-  return `${location.origin}${location.pathname}?baglan=${code}`;
+  return `${location.origin}${location.pathname}#baglan=${code}`;
 }
 
 export function customBroker(): string {
@@ -63,8 +79,20 @@ export function setCustomBroker(url: string) {
   else storage.remove(CUSTOM_BROKER_KEY);
 }
 
-export function savedLink(): { role: LinkRole; code: string } | null {
-  return storage.get<{ role: LinkRole; code: string } | null>(STORE_KEY, null);
+type SavedLink = { role: LinkRole; code: string; at: number };
+
+/** The remembered pairing, if it was active within RESUME_WINDOW_MS (older ones are dropped). */
+export function savedLink(now = Date.now()): { role: LinkRole; code: string } | null {
+  const s = storage.get<SavedLink | null>(STORE_KEY, null);
+  if (!s || typeof s.at !== 'number' || now - s.at > RESUME_WINDOW_MS || now < s.at - 60000) {
+    if (s) storage.remove(STORE_KEY);
+    return null;
+  }
+  return { role: s.role, code: s.code };
+}
+
+export function forgetSavedLink() {
+  storage.remove(STORE_KEY);
 }
 
 type Peer = { lastSeen: number; broker: number };
@@ -88,9 +116,15 @@ export class DeviceLink<In, Out> extends Emitter<LinkEvents<In>> {
   private retryTimers: number[] = [];
   private failed: boolean[] = [];
   private peers = new Map<string, Peer>();
-  private seen = new Set<string>();
+  private guard = new ReplayGuard();
+  private keys: PairKeys | null = null;
+  /** Bumped on every start/stop so async work for an old code is discarded. */
+  private generation = 0;
+  private sendChain: Promise<void> = Promise.resolve();
+  private recvChain: Promise<void> = Promise.resolve();
   private seq = 0;
   private beat = 0;
+  private lastSaved = 0;
 
   constructor(role: LinkRole) {
     super();
@@ -121,16 +155,39 @@ export class DeviceLink<In, Out> extends Emitter<LinkEvents<In>> {
     if (this.code === code && this.active) return;
     this.teardown();
     this.code = code;
-    storage.set(STORE_KEY, { role: this.role, code });
-    const custom = customBroker();
-    this.brokers = custom ? [custom] : [...DEFAULT_BROKERS];
-    this.clients = this.brokers.map(() => null);
-    this.retry = this.brokers.map(() => 0);
-    this.retryTimers = this.brokers.map(() => 0);
-    this.failed = this.brokers.map(() => false);
+    const gen = ++this.generation;
+    if (!secureSupported()) {
+      // WebCrypto exists only in secure contexts (HTTPS / localhost) — never fall back to plaintext
+      this.setStatus('unsupported');
+      return;
+    }
+    this.saveLink(true);
     this.setStatus('connecting');
-    this.brokers.forEach((_, i) => this.connect(i));
-    this.beat = window.setInterval(() => this.heartbeat(), HEARTBEAT_MS / 4);
+    void deriveKeys(code).then(
+      (keys) => {
+        if (gen !== this.generation) return;
+        this.keys = keys;
+        const custom = customBroker();
+        this.brokers = custom ? [custom] : [...DEFAULT_BROKERS];
+        this.clients = this.brokers.map(() => null);
+        this.retry = this.brokers.map(() => 0);
+        this.retryTimers = this.brokers.map(() => 0);
+        this.failed = this.brokers.map(() => false);
+        this.brokers.forEach((_, i) => this.connect(i));
+        this.beat = window.setInterval(() => this.heartbeat(), HEARTBEAT_MS / 4);
+      },
+      () => {
+        if (gen === this.generation) this.setStatus('unsupported');
+      }
+    );
+  }
+
+  /** Remember the pairing (throttled) so a page reload can resume it within RESUME_WINDOW_MS. */
+  private saveLink(force = false) {
+    const now = Date.now();
+    if (!this.code || (!force && now - this.lastSaved < 30000)) return;
+    this.lastSaved = now;
+    storage.set(STORE_KEY, { role: this.role, code: this.code, at: now } satisfies SavedLink);
   }
 
   /** Disconnect; `forget` also drops the remembered pairing. */
@@ -146,42 +203,67 @@ export class DeviceLink<In, Out> extends Emitter<LinkEvents<In>> {
   /** Close every broker connection without touching the status (used when switching codes). */
   private teardown() {
     if (this.code && this.active) this.sendAll({ t: 'bye' } as Out);
+    this.generation++;
     window.clearInterval(this.beat);
     for (const t of this.retryTimers) window.clearTimeout(t);
-    for (const c of this.clients) {
-      if (!c) continue;
-      c.onClose = null;
-      c.close();
-    }
+    // Close after the queued sends (the sealed 'bye') went out, but never wait long
+    const old = this.clients;
+    for (const c of old) if (c) c.onClose = c.onMessage = null;
+    const close = () => old.forEach((c) => c?.close());
+    void Promise.race([this.sendChain, new Promise((r) => setTimeout(r, 400))]).then(close);
     this.clients = [];
+    this.keys = null;
     this.peers.clear();
+    this.guard.clear();
   }
 
   send(msg: Out) {
-    const p = this.bestPeer();
-    const c = p ? this.clients[p.broker] : null;
-    if (c && c.state === 'open') c.publish(this.outTopic(), this.wrap(msg));
-    else this.sendAll(msg);
+    this.publish(msg, false);
   }
 
   private sendAll(msg: Out) {
-    const payload = this.wrap(msg);
-    for (const c of this.clients) if (c?.state === 'open') c.publish(this.outTopic(), payload);
+    this.publish(msg, true);
   }
 
-  private wrap(msg?: Out): string {
-    const env: Envelope<Out> = { from: this.id, seq: ++this.seq };
+  /**
+   * Seal and publish. Encryption is async, so sends are chained to keep their order; the
+   * target client is picked after sealing (the best broker may have changed meanwhile).
+   * `all` (or no known peer) fans out to every open broker.
+   */
+  private publish(msg: Out | undefined, all: boolean) {
+    const keys = this.keys;
+    if (!keys) return;
+    const topic = this.outTopic();
+    const env: Envelope<Out> = { from: this.id, seq: ++this.seq, ts: Date.now() };
     if (msg) env.m = msg;
     else env.hb = true;
-    return JSON.stringify(env);
+    const clients = this.clients;
+    this.sendChain = this.sendChain
+      .then(() => seal(keys, this.outDir(), JSON.stringify(env)))
+      .then((payload) => {
+        const p = all ? null : this.bestPeer();
+        const c = p ? clients[p.broker] : null;
+        if (c && c.state === 'open') c.publish(topic, payload);
+        else for (const cl of clients) if (cl?.state === 'open') cl.publish(topic, payload);
+      })
+      .catch(() => undefined);
+  }
+
+  /** Direction tag bound into each seal as associated data. */
+  private outDir() {
+    return this.role === 'host' ? 'to-display' : 'to-host';
+  }
+
+  private inDir() {
+    return this.role === 'host' ? 'to-host' : 'to-display';
   }
 
   private inTopic() {
-    return `${TOPIC_ROOT}/${this.code}/${this.role === 'host' ? 'h' : 'd'}`;
+    return `${TOPIC_ROOT}/${this.keys?.topic}/${this.role === 'host' ? 'h' : 'd'}`;
   }
 
   private outTopic() {
-    return `${TOPIC_ROOT}/${this.code}/${this.role === 'host' ? 'd' : 'h'}`;
+    return `${TOPIC_ROOT}/${this.keys?.topic}/${this.role === 'host' ? 'd' : 'h'}`;
   }
 
   private connect(i: number) {
@@ -199,7 +281,7 @@ export class DeviceLink<In, Out> extends Emitter<LinkEvents<In>> {
       this.failed[i] = false;
       c.subscribe(this.inTopic());
       // Announce right away so the other side does not wait for a heartbeat
-      c.publish(this.outTopic(), this.wrap());
+      this.publish(undefined, true);
       this.refresh();
     };
     c.onMessage = (_topic, payload) => this.receive(i, payload);
@@ -222,20 +304,28 @@ export class DeviceLink<In, Out> extends Emitter<LinkEvents<In>> {
   }
 
   private receive(broker: number, payload: string) {
-    let env: Envelope<In>;
-    try {
-      env = JSON.parse(payload) as Envelope<In>;
-    } catch {
-      return;
-    }
+    const keys = this.keys;
+    if (!keys) return;
+    const gen = this.generation;
+    // Decrypt in arrival order; anything that fails authentication is silently dropped
+    this.recvChain = this.recvChain
+      .then(() => unseal(keys, this.inDir(), payload))
+      .then((plain) => {
+        if (plain == null || gen !== this.generation) return;
+        let env: Envelope<In>;
+        try {
+          env = JSON.parse(plain) as Envelope<In>;
+        } catch {
+          return;
+        }
+        this.accept(broker, env);
+      })
+      .catch(() => undefined);
+  }
+
+  private accept(broker: number, env: Envelope<In>) {
     if (!env || typeof env.from !== 'string' || env.from === this.id) return;
-    const key = `${env.from}:${env.seq}`;
-    if (this.seen.has(key)) return;
-    this.seen.add(key);
-    if (this.seen.size > 400) {
-      const first = this.seen.values().next().value;
-      if (first !== undefined) this.seen.delete(first);
-    }
+    if (!this.guard.accept(env.from, env.seq, env.ts)) return;
     const now = performance.now();
     this.lastHeard = now;
     const known = this.peers.get(env.from);
@@ -270,9 +360,9 @@ export class DeviceLink<In, Out> extends Emitter<LinkEvents<In>> {
     if (changed) this.refresh();
     if (now - this.lastBeat >= HEARTBEAT_MS) {
       this.lastBeat = now;
-      const payload = this.wrap();
-      for (const c of this.clients) if (c?.state === 'open') c.publish(this.outTopic(), payload);
+      this.publish(undefined, true);
     }
+    if (this.status === 'connected') this.saveLink();
   }
 
   private refresh() {
