@@ -132,9 +132,9 @@ export class Screens {
     }
   }
 
-  private frame(title: string, content: HTMLElement[], opts: { back?: boolean; wide?: boolean } = {}): HTMLElement {
+  private frame(title: string, content: HTMLElement[], opts: { back?: boolean; wide?: boolean; onBack?: () => void } = {}): HTMLElement {
     const head = el('div', { class: 'scr-head' }, [
-      opts.back !== false ? this.btn('← Geri', 'ghost', () => this.back()) : el('span'),
+      opts.back !== false ? this.btn('← Geri', 'ghost', () => (opts.onBack ? opts.onBack() : this.back())) : el('span'),
       el('h2', { text: title }),
       this.profileChip(),
     ]);
@@ -437,15 +437,24 @@ export class Screens {
   }
 
   private showSessionDetail(s: import('../coach/profiles').SessionSummary) {
-    const compBars = COMPONENTS.map((c) => `<div class="sc-row big"><span>${COMPONENT_META[c].title}</span><div class="sc-bar"><i style="width:${s.components[c]}%;background:${scoreColor(s.components[c])}"></i></div><b>${s.components[c]}</b></div>`).join('');
-    const tips = s.tips?.length ? `<ol class="tips">${s.tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ol>` : '<p class="muted">—</p>';
-    const strengths = s.strengths?.length ? `<ul class="tips">${s.strengths.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '<p class="muted">—</p>';
+    const compBars = COMPONENTS.map((c) => {
+      const v = s.components?.[c];
+      return `<div class="sc-row big"><span>${COMPONENT_META[c].title}</span><div class="sc-bar"><i style="width:${v ?? 0}%;background:${scoreColor(v ?? 0)}"></i></div><b>${v ?? '—'}</b></div>`;
+    }).join('');
+    const legacy = !s.keyStats?.length;
+    const tipLines = s.tips?.length ? s.tips : (s.highlights ?? []);
+    const tips = tipLines.length ? `<ol class="tips">${tipLines.map((t) => `<li>${esc(t)}</li>`).join('')}</ol>` : '<p class="muted">Bu oturumda kayıtlı öneri yok.</p>';
+    const strengths = s.strengths?.length ? `<ul class="tips">${s.strengths.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '<p class="muted">Bu oturumda kayıtlı güçlü yön yok.</p>';
     const insights = s.insights?.length ? s.insights.map((ins) => `<div class="sc-row"><span>${esc(ins.title)}</span><b style="color:${scoreColor(ins.score ?? 0)}">${ins.score ?? '—'}</b></div>`).join('') : '';
     const stats = s.keyStats?.length ? `<table class="tbl"><tbody>${s.keyStats.map((ks) => `<tr><td>${esc(ks.label)}</td><td>${esc(ks.value)}</td></tr>`).join('')}</tbody></table>` : '';
+    const legacyNote = legacy
+      ? '<p class="muted small">Bu oturum ayrıntılı kayıt başlamadan önce tutulmuş. Puan, bileşenler, mesafe ve kısa notlar duruyor. Önerilerin tamamı, güçlü yönler ve ana istatistikler bundan sonraki oturumlarda kaydedilir.</p>'
+      : '';
     const content = el('div', {
-      html: `<div class="card"><h3>${esc(s.missionTitle ?? (s.kind === 'free' ? 'Serbest sürüş' : 'Oturum'))}</h3>
-        <p class="muted">${fmtDate(s.at)} · ${esc(s.map)} · ${esc(s.conditions)} · ${s.distanceKm.toFixed(1)} km · ${Math.round(s.durationSec / 60)} dk</p>
-        <div class="kt-score" style="color:${scoreColor(s.overall)}"><b>${s.overall}</b> ${s.grade} · Risk: ${esc(s.risk)}${s.styleAdherence != null ? ` · Stil ${s.styleAdherence}` : ''}</div>
+      html: `<div class="card"><h3>${esc(s.missionTitle ?? (s.kind === 'free' ? 'Serbest sürüş' : s.kind === 'calibration' ? 'Kalibrasyon' : 'Oturum'))}</h3>
+        <p class="muted">${fmtDate(s.at)} · ${esc(s.map)} · ${esc(s.conditions)} · ${s.distanceKm.toFixed(1)} km · ${Math.round(s.durationSec / 60)} dk${s.stars != null ? ' · ' + stars(s.stars) : ''}</p>
+        <div class="kt-score" style="color:${scoreColor(s.overall)}"><b>${s.overall}</b> ${esc(s.grade)} · Risk: ${esc(s.risk)}${s.styleAdherence != null ? ` · Stil ${s.styleAdherence}` : ''}</div>
+        ${legacyNote}
       </div>
       <div class="card"><h3>Bileşenler</h3>${compBars}</div>
       <div class="grid2">
@@ -453,11 +462,10 @@ export class Screens {
         <div class="card"><h3>Güçlü yönler</h3>${strengths}</div>
       </div>
       ${insights ? `<div class="card"><h3>Belirti okumaları</h3>${insights}</div>` : ''}
-      ${stats ? `<div class="card"><h3>Ana istatistikler</h3>${stats}</div>` : ''}
-      <div class="actions">${this.btn('← Geri', 'ghost', () => this.back()).outerHTML}</div>`,
+      ${stats ? `<div class="card"><h3>Ana istatistikler</h3>${stats}</div>` : ''}`,
     });
     this.root.innerHTML = '';
-    this.root.append(this.frame('Oturum Detayı', [content], { wide: true }));
+    this.root.append(this.frame('Oturum Detayı', [content], { wide: true, onBack: () => this.show('karne', false) }));
   }
 
   // ——————————————————————————— profiles ———————————————————————————
