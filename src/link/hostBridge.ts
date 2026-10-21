@@ -3,7 +3,6 @@ import type { ReportData } from '../game/session';
 import { settings } from '../core/settings';
 import { experiment } from '../coach/experiment';
 import { activeProfile, letterGrade } from '../coach/profiles';
-import { captureSessionDetail } from '../coach/sessionRecord';
 import { DeviceLink, forgetSavedLink, savedLink } from './link';
 import { deviceName } from './device';
 import { eventGroup, type DisplayMsg, type HostMsg, type LinkEvent, type LinkReport, type LinkState, type LinkTelemetry, type LinkHistory } from './protocol';
@@ -31,6 +30,7 @@ export class HostBridge {
   private lastEventAt = 0;
   private teleTimer = 0;
   private stateTimer = 0;
+  private historyRetry = 0;
 
   constructor() {
     // Experiment mode locks the phone link entirely (no feedback may reach a second screen)
@@ -44,13 +44,17 @@ export class HostBridge {
     this.link.on('peer', () => {
       this.link.send({ t: 'hello', name: deviceName() });
       this.sendSnapshot();
+      this.scheduleHistory();
     });
     this.link.on('message', ({ from, msg }) => {
       if (msg.t === 'hello') {
         this.displays.set(from, msg.name);
         this.link.send({ t: 'hello', name: deviceName() });
         this.sendSnapshot();
-      } else if (msg.t === 'bye') this.displays.delete(from);
+        this.scheduleHistory();
+      } else if (msg.t === 'history') this.sendHistory();
+      else if (msg.t === 'detail') this.sendDetail(msg.id);
+      else if (msg.t === 'bye') this.displays.delete(from);
       else if (msg.t === 'cmd') {
         if (msg.cmd === 'pause') this.src?.remotePause();
         else if (msg.cmd === 'resume') this.src?.remoteResume();
@@ -61,11 +65,12 @@ export class HostBridge {
       window.clearInterval(this.stateTimer);
       if (s !== 'connected') {
         this.displays.clear();
+        window.clearTimeout(this.historyRetry);
         return;
       }
       this.teleTimer = window.setInterval(() => this.sendTelemetry(), 250);
       this.stateTimer = window.setInterval(() => this.syncState(), 500);
-      this.sendHistory();
+      this.scheduleHistory();
     });
   }
 
@@ -142,7 +147,7 @@ export class HostBridge {
       tips: r.tips.slice(0, 6),
       strengths: r.strengths.slice(0, 5),
       counts,
-      detail: captureSessionDetail({ result: r, stats: d.stats, scan: d.scan, events: d.events, samples: d.samples }),
+      id: d.sessionId ?? undefined,
     };
     if (this.live) {
       this.syncState();
@@ -153,11 +158,24 @@ export class HostBridge {
     }
   }
 
+  /** List first, then again once the phone's subscription has settled. The list stays small. */
+  private scheduleHistory() {
+    this.sendHistory();
+    window.clearTimeout(this.historyRetry);
+    this.historyRetry = window.setTimeout(() => this.sendHistory(), 800);
+  }
+
+  /** One session's charts and sub-scores. Sent only when the phone opens that row. */
+  private sendDetail(id: string) {
+    if (!this.live || !this.feedbackOn) return;
+    const s = activeProfile()?.sessions.find((x) => x.id === id);
+    this.link.send({ t: 'detail', id, detail: s?.detail ?? null });
+  }
+
   sendHistory() {
     if (!this.live || !this.feedbackOn) return;
     const p = activeProfile();
-    if (!p) return;
-    const sessions = p.sessions.slice(0, 12).map((s) => ({
+    const sessions = (p?.sessions ?? []).slice(0, 20).map((s) => ({
       id: s.id,
       at: s.at,
       title: s.missionTitle ?? (s.kind === 'free' ? 'Serbest sürüş' : s.kind === 'calibration' ? 'Kalibrasyon' : 'Görev'),
@@ -172,12 +190,12 @@ export class HostBridge {
       strengths: s.strengths ?? [],
       components: s.components,
       keyStats: s.keyStats ?? [],
-      detail: s.detail,
     }));
     const history: LinkHistory = {
-      karneOverall: p.karne.overall,
-      karneGrade: letterGrade(p.karne.overall),
-      karneComponents: p.karne.components,
+      profileId: p?.id ?? '',
+      karneOverall: p?.karne.overall ?? 0,
+      karneGrade: p ? letterGrade(p.karne.overall) : '—',
+      karneComponents: p?.karne.components ?? { guvenlik: 0, kural: 0, tarama: 0, puruzsuzluk: 0, gorev: 0 },
       sessions,
     };
     this.link.send({ t: 'history', history });

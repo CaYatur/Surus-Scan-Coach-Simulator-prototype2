@@ -48,10 +48,13 @@ export type LinkReport = {
   tips: string[];
   strengths: string[];
   counts: { crash: number; violation: number; warning: number; positive: number };
+  /** Saved profile session, when this drive was written to the karne. */
+  id?: string;
   detail?: SessionDetail;
 };
 
 export type LinkHistory = {
+  profileId: string;
   karneOverall: number;
   karneGrade: string;
   karneComponents: Record<Component, number>;
@@ -84,9 +87,10 @@ export type HostMsg =
   | { t: 'segment' }
   | { t: 'report'; report: LinkReport }
   | { t: 'history'; history: LinkHistory }
+  | { t: 'detail'; id: string; detail: SessionDetail | null }
   | { t: 'bye' };
 
-export type DisplayMsg = { t: 'hello'; name: string } | { t: 'cmd'; cmd: 'pause' | 'resume' } | { t: 'bye' };
+export type DisplayMsg = { t: 'hello'; name: string } | { t: 'cmd'; cmd: 'pause' | 'resume' } | { t: 'history' } | { t: 'detail'; id: string } | { t: 'bye' };
 
 /** Plaintext inside the AES-GCM seal (see secure.ts). `ts` is the sender's wall clock (ms). */
 export type Envelope<M> = { from: string; seq: number; ts: number; hb?: true; m?: M };

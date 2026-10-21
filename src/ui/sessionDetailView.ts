@@ -26,6 +26,8 @@ export type DetailSource = {
   detail?: SessionDetail | null;
   /** In-progress drive: full metrics are written when the session ends. */
   pending?: boolean;
+  /** The row is saved; the long analysis is still on its way from the computer. */
+  loadingDetail?: boolean;
 };
 
 function list(items: string[] | undefined, empty: string): string {
@@ -109,7 +111,7 @@ export function sessionAnalysisHtml(s: DetailSource, baseline: StyleBaseline | n
       <p class="muted">${fmtDate(s.at)} · ${esc(s.map)} · ${esc(s.conditions)} · ${s.distanceKm.toFixed(1)} km · ${formatTime(s.durationSec)}${s.stars != null ? ' · ' + stars(s.stars) : ''}</p>
       <div class="kt-score" style="color:${scoreColor(s.overall)}"><b>${Math.round(s.overall)}</b> ${esc(s.grade)} · Risk: ${esc(s.risk || '—')}${s.styleAdherence != null ? ` · Stil ${s.styleAdherence}` : ''}${d && d.confidence < 0.8 ? ` · Güven %${Math.round(d.confidence * 100)}` : ''}</div>
       ${d?.caps.length ? `<div class="caps">${d.caps.map((c) => `⚠ ${esc(c)}`).join('<br>')}</div>` : ''}
-      ${d ? '' : s.pending ? '<p class="muted small">Sürüş bitince alt metrikler, grafikler ve olay listesi bu karta yazılır. Şimdilik canlı bileşen puanları görünür.</p>' : '<p class="muted small">Bu oturum ayrıntılı kayıttan önce tutulmuş. Puan, bileşenler ve kısa notlar duruyor. Alt metrikler, grafikler ve olay listesi bundan sonraki oturumlarda burada açılır.</p>'}
+      ${d ? '' : s.loadingDetail ? '<p class="muted small">Ayrıntılı istatistikler bilgisayardan yükleniyor…</p>' : s.pending ? '<p class="muted small">Sürüş bitince alt metrikler, grafikler ve olay listesi bu karta yazılır. Şimdilik canlı bileşen puanları görünür.</p>' : '<p class="muted small">Bu oturum ayrıntılı kayıttan önce tutulmuş. Puan, bileşenler ve kısa notlar duruyor. Alt metrikler, grafikler ve olay listesi bundan sonraki oturumlarda burada açılır.</p>'}
     </div>`;
   if (!d) {
     return `${head}

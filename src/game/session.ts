@@ -56,6 +56,8 @@ export type ReportData = {
   baseline: StyleBaseline | null;
   scan: { rate: number; maxGap: number; glances: number; shoulder: number };
   at: number;
+  /** Profile session id when this drive was saved. Null for guests and very short drives. */
+  sessionId: string | null;
 };
 
 export type SessionUI = {
@@ -994,6 +996,7 @@ export class Session implements MissionHost {
     const conditions = `${TIME_LABEL[b.env.time]} · ${WEATHER_LABEL[b.env.weather]}`;
     const profile = activeProfile();
     let karne: KarneUpdate | null = null;
+    let sessionId: string | null = null;
     const durationSec = this.elapsed - this.segStart;
     // Experiment sessions stay anonymous: nothing is written to a named profile's karne
     if (profile && durationSec > 25 && !this.exp.participant) {
@@ -1042,6 +1045,7 @@ export class Session implements MissionHost {
           samples: this.telemetry.samples,
         }),
       };
+      sessionId = summary.id;
       karne = applySession(profile, res, summary, {
         mirrorBefore: man ? ((st.turns.mirror + st.laneChanges.mirror) / man) * 100 : null,
         maneuvers: man,
@@ -1069,6 +1073,7 @@ export class Session implements MissionHost {
       baseline: profile?.baseline.ready ? profile.baseline : null,
       scan: { rate: this.monitor.scan.rate(), maxGap: this.monitor.scan.maxGap, glances: this.monitor.scan.count(), shoulder: this.monitor.scan.count('shoulderL') + this.monitor.scan.count('shoulderR') },
       at: Date.now(),
+      sessionId,
       meta: this.meta(),
     });
   }

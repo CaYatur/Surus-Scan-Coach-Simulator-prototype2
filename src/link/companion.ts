@@ -6,6 +6,7 @@ import { DeviceLink, formatCode, linkUrl, newLinkCode, savedLink, type LinkStatu
 import { deviceName } from './device';
 import { qrSvg } from './qr';
 import { eventGroup, type DisplayMsg, type EventGroup, type HostMsg, type LinkEvent, type LinkReport, type LinkState, type LinkTelemetry, type LinkHistory } from './protocol';
+import { loadHistoryCache, mergeHistory, saveHistoryCache, upsertSession } from './historySync';
 
 /**
  * Companion display ("Canlı Koç Ekranı"): a phone paired with the game PC turns into a
@@ -295,14 +296,45 @@ export class Companion {
         break;
       case 'report':
         this.report = m.report;
+        if (m.report.id) {
+          this.remember(upsertSession(this.history, {
+            id: m.report.id,
+            at: Date.now(),
+            title: m.report.mission?.title ?? 'Serbest sürüş',
+            overall: m.report.overall,
+            grade: m.report.grade,
+            map: this.state?.map ?? '',
+            conditions: this.state?.conditions ?? '',
+            distanceKm: m.report.distanceKm,
+            durationSec: m.report.durationSec,
+            risk: '',
+            tips: m.report.tips,
+            strengths: m.report.strengths,
+            components: m.report.components,
+            keyStats: [],
+            detail: m.report.detail,
+          }));
+          this.link.send({ t: 'detail', id: m.report.id });
+        }
         this.renderReport();
         this.root.querySelector('.cmp-scroll')?.scrollTo({ top: 0, behavior: 'smooth' });
         this.cue('report');
         break;
       case 'history':
-        this.history = m.history;
-        if (this.view === 'history') this.renderHistory();
+        this.remember(mergeHistory(this.history, m.history));
         break;
+      case 'detail': {
+        const row = this.history?.sessions.find((s) => s.id === m.id);
+        if (row && m.detail) {
+          row.detail = m.detail;
+          this.remember(this.history!);
+        }
+        if (this.report?.id === m.id && m.detail) {
+          this.report = { ...this.report, detail: m.detail };
+          this.renderReport();
+        }
+        break;
+      }
       case 'bye':
         break;
     }
@@ -411,6 +443,8 @@ export class Companion {
     this.ui = { nofb, conn, connText: conn.querySelector('span')!, mode, where, timer, speed, speedArc, limit, gear, sigL, sigR, scoreArc, scoreVal, grade, comps, counters, mission, reportBox, historyBox, feed, chips, toasts, alert, flash, wait, idle, pauseBtn, toggles, stats, liveBtn, histBtn };
     this.buildToggles();
     this.buildChips();
+    const cached = loadHistoryCache();
+    if (cached) this.history = cached;
   }
 
   private buildToggles() {
@@ -761,8 +795,17 @@ export class Companion {
     this.ui.histBtn.classList.toggle('on', view === 'history');
     this.ui.liveBtn.setAttribute('aria-pressed', view === 'live' ? 'true' : 'false');
     this.ui.histBtn.setAttribute('aria-pressed', view === 'history' ? 'true' : 'false');
-    if (view === 'history') this.renderHistory();
+    if (view === 'history') {
+      this.link.send({ t: 'history' });
+      this.renderHistory();
+    }
     this.root.querySelector('.cmp-scroll')?.scrollTo({ top: 0 });
+  }
+
+  private remember(h: LinkHistory) {
+    this.history = h;
+    saveHistoryCache(h);
+    if (this.view === 'history') this.renderHistory();
   }
 
   private reportSource(r: LinkReport): DetailSource {
@@ -818,6 +861,7 @@ export class Companion {
     if (this.historyFocus !== 'list' && this.historyFocus !== 'current') {
       const s = h?.sessions.find((x) => x.id === this.historyFocus);
       if (s) {
+        if (!s.detail) this.link.send({ t: 'detail', id: s.id });
         this.paintHistoryDetail({
           title: s.title,
           at: s.at,
@@ -832,6 +876,7 @@ export class Companion {
           tips: s.tips,
           strengths: s.strengths,
           detail: s.detail,
+          loadingDetail: !s.detail,
         });
         return;
       }
@@ -852,7 +897,7 @@ export class Companion {
         (s) => `<button type="button" class="cmp-sess" data-sid="${esc(s.id)}"><div><b>${esc(s.title)}</b><small>${fmtDate(s.at)} · ${esc(s.map)} · ${s.distanceKm.toFixed(1)} km · ${mmss(s.durationSec)}</small></div><span style="color:${scoreColor(s.overall)}">${s.overall} ${esc(s.grade)}</span></button>`
       )
       .join('');
-    box.innerHTML = `<div class="cmp-h-head"><h2>Oturum geçmişi</h2><p>${h ? 'Bir oturuma dokununca oturum sonundaki istatistikler açılır.' : 'Bilgisayardan geçmiş henüz gelmedi. Profil seçili ve bağlantı açık olmalı.'}</p></div>
+    box.innerHTML = `<div class="cmp-h-head"><h2>Oturum geçmişi</h2><p>${h ? 'Bir oturuma dokununca oturum sonundaki istatistikler açılır.' : 'Geçmiş bilgisayardan isteniyor…'}</p></div>
       ${h ? `<div class="cmp-h-karne"><div><small>Sürücü karnesi</small><b style="color:${scoreColor(h.karneOverall)}">${h.karneOverall}</b><span>${esc(h.karneGrade)}</span></div><div class="cmp-comps">${comps}</div></div>` : ''}
       ${current}
       <div class="cmp-sess-list">${cards || '<p class="muted">Kayıtlı oturum yok.</p>'}</div>`;
