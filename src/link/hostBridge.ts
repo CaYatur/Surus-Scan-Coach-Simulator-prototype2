@@ -2,9 +2,10 @@ import { EVENT_META, type CoachEvent } from '../coach/types';
 import type { ReportData } from '../game/session';
 import { settings } from '../core/settings';
 import { experiment } from '../coach/experiment';
+import { activeProfile, letterGrade } from '../coach/profiles';
 import { DeviceLink, forgetSavedLink, savedLink } from './link';
 import { deviceName } from './device';
-import { eventGroup, type DisplayMsg, type HostMsg, type LinkEvent, type LinkReport, type LinkState, type LinkTelemetry } from './protocol';
+import { eventGroup, type DisplayMsg, type HostMsg, type LinkEvent, type LinkReport, type LinkState, type LinkTelemetry, type LinkHistory } from './protocol';
 
 /** What the game exposes to the link. */
 export interface HostSource {
@@ -63,6 +64,7 @@ export class HostBridge {
       }
       this.teleTimer = window.setInterval(() => this.sendTelemetry(), 250);
       this.stateTimer = window.setInterval(() => this.syncState(), 500);
+      this.sendHistory();
     });
   }
 
@@ -97,7 +99,7 @@ export class HostBridge {
     this.link.stop();
   }
 
-  // ——————————————————————————— game hooks ———————————————————————————
+  // ——————————————————————— game hooks ————————————————————————
 
   coachEvent(e: CoachEvent) {
     const ev: LinkEvent = { kind: e.kind, label: EVENT_META[e.kind].label, severity: e.severity, component: e.component, message: e.message, t: Math.round(e.t * 10) / 10 };
@@ -142,11 +144,43 @@ export class HostBridge {
     };
     if (this.live) {
       this.syncState();
-      if (this.feedbackOn) this.link.send({ t: 'report', report: this.lastReport });
+      if (this.feedbackOn) {
+        this.link.send({ t: 'report', report: this.lastReport });
+        this.sendHistory();
+      }
     }
   }
 
-  // ——————————————————————————— sending ———————————————————————————
+  sendHistory() {
+    if (!this.live || !this.feedbackOn) return;
+    const p = activeProfile();
+    if (!p) return;
+    const sessions = p.sessions.slice(0, 12).map((s) => ({
+      id: s.id,
+      at: s.at,
+      title: s.missionTitle ?? (s.kind === 'free' ? 'Serbest sürüş' : s.kind === 'calibration' ? 'Kalibrasyon' : 'Görev'),
+      overall: s.overall,
+      grade: s.grade,
+      map: s.map,
+      conditions: s.conditions,
+      distanceKm: s.distanceKm,
+      durationSec: s.durationSec,
+      risk: s.risk,
+      tips: s.tips ?? [],
+      strengths: s.strengths ?? [],
+      components: s.components,
+      keyStats: s.keyStats ?? [],
+    }));
+    const history: LinkHistory = {
+      karneOverall: p.karne.overall,
+      karneGrade: letterGrade(p.karne.overall),
+      karneComponents: p.karne.components,
+      sessions,
+    };
+    this.link.send({ t: 'history', history });
+  }
+
+  // ——————————————————————— sending ————————————————————————
 
   private get live() {
     return this.link.status === 'connected';
