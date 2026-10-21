@@ -3,6 +3,7 @@ import type { ReportData } from '../game/session';
 import { settings } from '../core/settings';
 import { experiment } from '../coach/experiment';
 import { activeProfile, letterGrade } from '../coach/profiles';
+import { captureSessionDetail } from '../coach/sessionRecord';
 import { DeviceLink, forgetSavedLink, savedLink } from './link';
 import { deviceName } from './device';
 import { eventGroup, type DisplayMsg, type HostMsg, type LinkEvent, type LinkReport, type LinkState, type LinkTelemetry, type LinkHistory } from './protocol';
@@ -138,9 +139,10 @@ export class HostBridge {
       mission: d.mission ? { title: d.mission.def.title, success: d.mission.success, stars: d.mission.stars, failReason: d.mission.failReason } : null,
       durationSec: Math.round(r.durationSec),
       distanceKm: Math.round(r.distanceKm * 10) / 10,
-      tips: r.tips.slice(0, 3),
-      strengths: r.strengths.slice(0, 3),
+      tips: r.tips.slice(0, 6),
+      strengths: r.strengths.slice(0, 5),
       counts,
+      detail: captureSessionDetail({ result: r, stats: d.stats, scan: d.scan, events: d.events, samples: d.samples }),
     };
     if (this.live) {
       this.syncState();
@@ -166,10 +168,11 @@ export class HostBridge {
       distanceKm: s.distanceKm,
       durationSec: s.durationSec,
       risk: s.risk,
-      tips: s.tips ?? [],
+      tips: (s.tips?.length ? s.tips : s.highlights) ?? [],
       strengths: s.strengths ?? [],
       components: s.components,
       keyStats: s.keyStats ?? [],
+      detail: s.detail,
     }));
     const history: LinkHistory = {
       karneOverall: p.karne.overall,

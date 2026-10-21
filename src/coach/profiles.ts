@@ -2,6 +2,7 @@ import { storage } from '../core/storage';
 import { clamp } from '../core/math';
 import { blendBaseline, emptyBaseline, letterGrade, type SessionResult, type StyleBaseline } from './metrics';
 import { COMPONENTS, COMPONENT_META, type Component } from './types';
+import type { SessionDetail } from './sessionRecord';
 
 export type SessionKind = 'calibration' | 'mission' | 'free';
 
@@ -30,6 +31,8 @@ export type SessionSummary = {
   styleAdherence: number | null;
   insights: { id: string; title: string; score: number | null }[];
   keyStats: { label: string; value: string }[];
+  /** Full end-of-session analysis. Missing on sessions saved before this field existed. */
+  detail?: SessionDetail;
 };
 
 export type Profile = {

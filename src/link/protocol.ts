@@ -1,4 +1,5 @@
 import type { Component, Severity, EventKind } from '../coach/types';
+import type { SessionDetail } from '../coach/sessionRecord';
 
 /** Messages exchanged between the game (host, usually a PC) and the companion display (phone). */
 
@@ -47,6 +48,7 @@ export type LinkReport = {
   tips: string[];
   strengths: string[];
   counts: { crash: number; violation: number; warning: number; positive: number };
+  detail?: SessionDetail;
 };
 
 export type LinkHistory = {
@@ -68,6 +70,7 @@ export type LinkHistory = {
     strengths: string[];
     components: Record<Component, number>;
     keyStats: { label: string; value: string }[];
+    detail?: SessionDetail;
   }[];
 };
 

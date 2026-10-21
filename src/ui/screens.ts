@@ -1,5 +1,6 @@
 import { el, esc, fmtDate, scoreColor, download } from './dom';
 import { lineChart, radarSvg, stars } from './charts';
+import { bindSessionAnalysis, sessionAnalysisHtml } from './sessionDetailView';
 import { settings, DEFAULT_SETTINGS, CONTROL_PRESETS, PRESET_KEYS, type Settings, type QualityLevel, type ControlPreset } from '../core/settings';
 import { BIND_META, actionKeys, bindings, keyLabel, rebind, resetBindings, type BindAction } from '../input/bindings';
 import { controlDevice, promptHtml } from '../input/prompts';
@@ -437,33 +438,33 @@ export class Screens {
   }
 
   private showSessionDetail(s: import('../coach/profiles').SessionSummary) {
-    const compBars = COMPONENTS.map((c) => {
-      const v = s.components?.[c];
-      return `<div class="sc-row big"><span>${COMPONENT_META[c].title}</span><div class="sc-bar"><i style="width:${v ?? 0}%;background:${scoreColor(v ?? 0)}"></i></div><b>${v ?? '—'}</b></div>`;
-    }).join('');
-    const legacy = !s.keyStats?.length;
-    const tipLines = s.tips?.length ? s.tips : (s.highlights ?? []);
-    const tips = tipLines.length ? `<ol class="tips">${tipLines.map((t) => `<li>${esc(t)}</li>`).join('')}</ol>` : '<p class="muted">Bu oturumda kayıtlı öneri yok.</p>';
-    const strengths = s.strengths?.length ? `<ul class="tips">${s.strengths.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '<p class="muted">Bu oturumda kayıtlı güçlü yön yok.</p>';
-    const insights = s.insights?.length ? s.insights.map((ins) => `<div class="sc-row"><span>${esc(ins.title)}</span><b style="color:${scoreColor(ins.score ?? 0)}">${ins.score ?? '—'}</b></div>`).join('') : '';
-    const stats = s.keyStats?.length ? `<table class="tbl"><tbody>${s.keyStats.map((ks) => `<tr><td>${esc(ks.label)}</td><td>${esc(ks.value)}</td></tr>`).join('')}</tbody></table>` : '';
-    const legacyNote = legacy
-      ? '<p class="muted small">Bu oturum ayrıntılı kayıt başlamadan önce tutulmuş. Puan, bileşenler, mesafe ve kısa notlar duruyor. Önerilerin tamamı, güçlü yönler ve ana istatistikler bundan sonraki oturumlarda kaydedilir.</p>'
-      : '';
+    const profile = activeProfile();
     const content = el('div', {
-      html: `<div class="card"><h3>${esc(s.missionTitle ?? (s.kind === 'free' ? 'Serbest sürüş' : s.kind === 'calibration' ? 'Kalibrasyon' : 'Oturum'))}</h3>
-        <p class="muted">${fmtDate(s.at)} · ${esc(s.map)} · ${esc(s.conditions)} · ${s.distanceKm.toFixed(1)} km · ${Math.round(s.durationSec / 60)} dk${s.stars != null ? ' · ' + stars(s.stars) : ''}</p>
-        <div class="kt-score" style="color:${scoreColor(s.overall)}"><b>${s.overall}</b> ${esc(s.grade)} · Risk: ${esc(s.risk)}${s.styleAdherence != null ? ` · Stil ${s.styleAdherence}` : ''}</div>
-        ${legacyNote}
-      </div>
-      <div class="card"><h3>Bileşenler</h3>${compBars}</div>
-      <div class="grid2">
-        <div class="card"><h3>Koç önerileri</h3>${tips}</div>
-        <div class="card"><h3>Güçlü yönler</h3>${strengths}</div>
-      </div>
-      ${insights ? `<div class="card"><h3>Belirti okumaları</h3>${insights}</div>` : ''}
-      ${stats ? `<div class="card"><h3>Ana istatistikler</h3>${stats}</div>` : ''}`,
+      class: 'sess-detail',
+      html: sessionAnalysisHtml(
+        {
+          title: s.missionTitle ?? (s.kind === 'free' ? 'Serbest sürüş' : s.kind === 'calibration' ? 'Kalibrasyon' : 'Görev'),
+          at: s.at,
+          map: s.map,
+          conditions: s.conditions,
+          distanceKm: s.distanceKm,
+          durationSec: s.durationSec,
+          stars: s.stars,
+          overall: s.overall,
+          grade: s.grade,
+          risk: s.risk,
+          styleAdherence: s.styleAdherence,
+          components: s.components,
+          tips: s.tips,
+          strengths: s.strengths,
+          highlights: s.highlights,
+          detail: s.detail,
+        },
+        profile?.baseline ?? null,
+        profile?.karne.components
+      ),
     });
+    bindSessionAnalysis(content);
     this.root.innerHTML = '';
     this.root.append(this.frame('Oturum Detayı', [content], { wide: true, onBack: () => this.show('karne', false) }));
   }

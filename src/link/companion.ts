@@ -1,4 +1,5 @@
-import { el, esc, scoreColor } from '../ui/dom';
+import { el, esc, fmtDate, scoreColor } from '../ui/dom';
+import { bindSessionAnalysis, sessionAnalysisHtml, type DetailSource } from '../ui/sessionDetailView';
 import { storage } from '../core/storage';
 import { COMPONENTS, COMPONENT_META, type EventKind } from '../coach/types';
 import { DeviceLink, formatCode, linkUrl, newLinkCode, savedLink, type LinkStatus } from './link';
@@ -166,6 +167,8 @@ export class Companion {
     pauseBtn: HTMLButtonElement;
     toggles: HTMLElement;
     stats: HTMLElement;
+    histBtn: HTMLButtonElement;
+    histLabel: HTMLElement;
   };
 
   constructor(host: HTMLElement) {
@@ -298,7 +301,7 @@ export class Companion {
         break;
       case 'history':
         this.history = m.history;
-        this.renderHistory();
+        if (this.view === 'history') this.renderHistory();
         break;
       case 'bye':
         break;
@@ -360,7 +363,7 @@ export class Companion {
     const counters = el('section', { class: 'cmp-counters' });
     const mission = el('section', { class: 'cmp-mission hidden' });
     const reportBox = el('section', { class: 'cmp-report hidden' });
-    const historyBox = el('section', { class: 'cmp-history hidden' });
+    const historyBox = el('section', { class: 'cmp-history' });
     const idle = el('section', {
       class: 'cmp-idle hidden',
       html: '<div class="cmp-idle-car">🚗</div><b>Bilgisayarda sürüş bekleniyor</b><span>Serbest sürüş veya bir görev başladığında hız, puan ve tüm uyarılar burada anlık görünür.</span>',
@@ -377,8 +380,10 @@ export class Companion {
       this.link.send({ t: 'cmd', cmd: paused ? 'resume' : 'pause' });
     };
     const toggles = el('div', { class: 'cmp-toggles' });
-    const histBtn = el('button', { class: 'cmp-btn ghost', text: '📋 Geçmiş' });
-    histBtn.onclick = () => this.toggleHistory();
+    const histLabel = el('span', { text: 'Geçmiş' });
+    const histBtn = el('button', { class: 'cmp-switch', type: 'button' }, [el('i'), histLabel]) as HTMLButtonElement;
+    histBtn.setAttribute('aria-pressed', 'false');
+    histBtn.onclick = () => this.setView(this.view === 'history' ? 'live' : 'history');
     const menuBtn = el('button', { class: 'cmp-btn ghost', text: 'Menü' });
     menuBtn.onclick = () => this.close();
     const offBtn = el('button', { class: 'cmp-btn danger', text: 'Bağlantıyı kes' });
@@ -394,11 +399,13 @@ export class Companion {
     const wait = el('div', { class: 'cmp-wait hidden' });
 
     const nofb = el('section', { class: 'cmp-nofb hidden', text: '🔕 Bilgisayarda canlı koçluk ipuçları kapalı — uyarılar, puan ve rapor bu ekranda gösterilmez.' });
-    const scroll = el('div', { class: 'cmp-scroll' }, [status, nofb, idle, reportBox, historyBox, dash, comps, stats, counters, mission, feedBox]);
+    const live = el('div', { class: 'cmp-live' }, [status, nofb, idle, reportBox, dash, comps, stats, counters, mission, feedBox]);
+    const scroll = el('div', { class: 'cmp-scroll' }, [live, historyBox]);
+    r.dataset.view = 'live';
     r.append(flash, top, scroll, foot, toasts, alert, wait);
     r.addEventListener('pointerdown', () => this.unlockAudio(), { passive: true });
 
-    this.ui = { nofb, conn, connText: conn.querySelector('span')!, mode, where, timer, speed, speedArc, limit, gear, sigL, sigR, scoreArc, scoreVal, grade, comps, counters, mission, reportBox, historyBox, feed, chips, toasts, alert, flash, wait, idle, pauseBtn, toggles, stats };
+    this.ui = { nofb, conn, connText: conn.querySelector('span')!, mode, where, timer, speed, speedArc, limit, gear, sigL, sigR, scoreArc, scoreVal, grade, comps, counters, mission, reportBox, historyBox, feed, chips, toasts, alert, flash, wait, idle, pauseBtn, toggles, stats, histBtn, histLabel };
     this.buildToggles();
     this.buildChips();
   }
@@ -604,8 +611,15 @@ export class Companion {
       </div>
       <div class="cmp-r-meta"><span>🕑 ${mmss(r.durationSec)}</span><span>📍 ${r.distanceKm.toFixed(1)} km</span><span>💥 ${r.counts.crash}</span><span>⛔ ${r.counts.violation}</span><span>⚠️ ${r.counts.warning}</span><span>✓ ${r.counts.positive}</span></div>
       ${r.strengths.length ? `<div class="cmp-r-list good"><b>Güçlü yönler</b>${r.strengths.map((s) => `<p>✓ ${esc(s)}</p>`).join('')}</div>` : ''}
-      ${r.tips.length ? `<div class="cmp-r-list"><b>Gelişim önerileri</b>${r.tips.map((s) => `<p>→ ${esc(s)}</p>`).join('')}</div>` : ''}
-      <small class="muted">Ayrıntılı rapor bilgisayar ekranında.</small>`;
+      ${r.detail ? '' : r.tips.length ? `<div class="cmp-r-list"><b>Gelişim önerileri</b>${r.tips.map((s) => `<p>→ ${esc(s)}</p>`).join('')}</div>` : ''}`;
+    if (r.detail) {
+      const extra = el('div', {
+        class: 'sess-detail',
+        html: sessionAnalysisHtml(this.reportSource(r), null),
+      });
+      bindSessionAnalysis(extra);
+      box.append(extra);
+    }
   }
 
   // ——————————————————————————— live reactions ———————————————————————————
@@ -733,39 +747,136 @@ export class Companion {
     }
   }
 
-  private historyOpen = false;
+  private view: 'live' | 'history' = 'live';
+  private historyFocus: 'list' | 'current' | string = 'list';
 
-  private toggleHistory() {
-    this.historyOpen = !this.historyOpen;
-    this.ui.historyBox.classList.toggle('hidden', !this.historyOpen);
-    if (this.historyOpen) this.renderHistory();
-    this.root.querySelector('.cmp-scroll')?.scrollTo({ top: 0, behavior: 'smooth' });
+  private setView(view: 'live' | 'history') {
+    this.view = view;
+    if (view === 'live') this.historyFocus = 'list';
+    this.root.dataset.view = view;
+    this.ui.histLabel.textContent = view === 'history' ? 'Canlı' : 'Geçmiş';
+    this.ui.histBtn.classList.toggle('on', view === 'history');
+    this.ui.histBtn.setAttribute('aria-pressed', view === 'history' ? 'true' : 'false');
+    if (view === 'history') this.renderHistory();
+    this.root.querySelector('.cmp-scroll')?.scrollTo({ top: 0 });
+  }
+
+  private reportSource(r: LinkReport): DetailSource {
+    const st = this.state;
+    return {
+      title: r.mission?.title ?? 'Şu anki oturum',
+      at: Date.now(),
+      map: st?.map ?? '',
+      conditions: st?.conditions ?? '',
+      distanceKm: r.distanceKm,
+      durationSec: r.durationSec,
+      stars: r.mission?.stars,
+      overall: r.overall,
+      grade: r.grade,
+      risk: '',
+      components: r.components,
+      tips: r.tips,
+      strengths: r.strengths,
+      detail: r.detail,
+    };
+  }
+
+  private liveSource(): DetailSource | null {
+    if (this.report?.detail || (this.report && this.state?.mode === 'report')) return { ...this.reportSource(this.report), pending: !this.report.detail };
+    const t = this.tele;
+    const st = this.state;
+    if (!t || !st || st.mode === 'menu' || st.mode === 'loading') return null;
+    const overall = t.overall ?? 0;
+    const grade = t.overall == null ? '—' : overall >= 90 ? 'A' : overall >= 80 ? 'B' : overall >= 70 ? 'C' : overall >= 60 ? 'D' : overall >= 50 ? 'E' : 'F';
+    return {
+      title: st.mission?.title ?? 'Şu anki oturum',
+      at: Date.now(),
+      map: st.map,
+      conditions: st.conditions,
+      distanceKm: t.km,
+      durationSec: t.t,
+      overall,
+      grade,
+      risk: '',
+      components: t.components,
+      pending: true,
+    };
   }
 
   private renderHistory() {
-    const h = this.history;
     const box = this.ui.historyBox;
-    if (!h || !this.historyOpen) {
-      box.innerHTML = '';
+    const h = this.history;
+    const live = this.liveSource();
+    if (this.historyFocus === 'current' && live) {
+      this.paintHistoryDetail(live);
       return;
     }
-    const avg = `<div class="cmp-karne"><b>Genel ortalama</b> <span style="color:${scoreColor(h.karneOverall)}">${h.karneOverall} ${h.karneGrade}</span></div>`;
-    const list = h.sessions.map((s) => {
-      const detail = `<div class="sess-detail hidden">
-        <div>${s.components ? Object.entries(s.components).map(([k, v]) => `<div>${k}: ${v}</div>`).join('') : ''}</div>
-        ${s.tips?.length ? `<p><b>Öneriler:</b> ${s.tips.map(esc).join(' · ')}</p>` : ''}
-        ${s.strengths?.length ? `<p><b>Güçlü:</b> ${s.strengths.map(esc).join(' · ')}</p>` : ''}
-        ${s.keyStats?.length ? s.keyStats.map((ks) => `<div>${esc(ks.label)}: ${esc(ks.value)}</div>`).join('') : ''}
-      </div>`;
-      return `<div class="sess-row" data-id="${esc(s.id)}"><b>${esc(s.title)}</b> · ${new Date(s.at).toLocaleDateString('tr')} · ${s.distanceKm.toFixed(1)} km · <span style="color:${scoreColor(s.overall)}">${s.overall} ${s.grade}</span>${detail}</div>`;
-    }).join('');
-    box.innerHTML = `<h3>Oturum Geçmişi</h3>${avg}<div class="sess-list">${list || '<p class="muted">Henüz oturum yok.</p>'}</div>`;
-    box.querySelectorAll('.sess-row').forEach((row) => {
-      row.addEventListener('click', () => {
-        const det = row.querySelector('.sess-detail');
-        det?.classList.toggle('hidden');
+    if (this.historyFocus !== 'list' && this.historyFocus !== 'current') {
+      const s = h?.sessions.find((x) => x.id === this.historyFocus);
+      if (s) {
+        this.paintHistoryDetail({
+          title: s.title,
+          at: s.at,
+          map: s.map,
+          conditions: s.conditions,
+          distanceKm: s.distanceKm,
+          durationSec: s.durationSec,
+          overall: s.overall,
+          grade: s.grade,
+          risk: s.risk,
+          components: s.components,
+          tips: s.tips,
+          strengths: s.strengths,
+          detail: s.detail,
+        });
+        return;
+      }
+      this.historyFocus = 'list';
+    }
+    const comps = h
+      ? COMPONENTS.map((c) => {
+          const v = h.karneComponents?.[c];
+          const meta = COMPONENT_META[c];
+          return `<div class="cmp-comp"><span>${esc(meta.title)}</span><div class="cmp-bar"><i style="width:${v ?? 0}%;background:${meta.color}"></i></div><b>${v == null ? '—' : Math.round(v)}</b></div>`;
+        }).join('')
+      : '';
+    const current = live
+      ? `<button type="button" class="cmp-sess live" data-focus="current"><div><b>Şu anki oturum</b><small>${esc(live.title)} · ${live.detail ? 'oturum sonu analizi' : 'canlı özet'}</small></div><span style="color:${scoreColor(live.overall)}">${Math.round(live.overall)} ${esc(live.grade)}</span></button>`
+      : '';
+    const cards = (h?.sessions ?? [])
+      .map(
+        (s) => `<button type="button" class="cmp-sess" data-sid="${esc(s.id)}"><div><b>${esc(s.title)}</b><small>${fmtDate(s.at)} · ${esc(s.map)} · ${s.distanceKm.toFixed(1)} km · ${mmss(s.durationSec)}</small></div><span style="color:${scoreColor(s.overall)}">${s.overall} ${esc(s.grade)}</span></button>`
+      )
+      .join('');
+    box.innerHTML = `<div class="cmp-h-head"><h2>Oturum geçmişi</h2><p>${h ? 'Bir oturuma dokununca oturum sonundaki istatistikler açılır.' : 'Bilgisayardan geçmiş henüz gelmedi. Profil seçili ve bağlantı açık olmalı.'}</p></div>
+      ${h ? `<div class="cmp-h-karne"><div><small>Sürücü karnesi</small><b style="color:${scoreColor(h.karneOverall)}">${h.karneOverall}</b><span>${esc(h.karneGrade)}</span></div><div class="cmp-comps">${comps}</div></div>` : ''}
+      ${current}
+      <div class="cmp-sess-list">${cards || '<p class="muted">Kayıtlı oturum yok.</p>'}</div>`;
+    box.querySelector('[data-focus="current"]')?.addEventListener('click', () => {
+      this.historyFocus = 'current';
+      this.renderHistory();
+      this.root.querySelector('.cmp-scroll')?.scrollTo({ top: 0 });
+    });
+    box.querySelectorAll<HTMLElement>('[data-sid]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.historyFocus = btn.dataset.sid || 'list';
+        this.renderHistory();
+        this.root.querySelector('.cmp-scroll')?.scrollTo({ top: 0 });
       });
     });
+  }
+
+  private paintHistoryDetail(source: DetailSource) {
+    const box = this.ui.historyBox;
+    const back = el('button', { class: 'cmp-backlink', type: 'button', text: '← Oturumlar' });
+    back.onclick = () => {
+      this.historyFocus = 'list';
+      this.renderHistory();
+    };
+    const body = el('div', { class: 'sess-detail', html: sessionAnalysisHtml(source, null) });
+    bindSessionAnalysis(body);
+    box.innerHTML = '';
+    box.append(back, body);
   }
 
   private speak(text: string) {

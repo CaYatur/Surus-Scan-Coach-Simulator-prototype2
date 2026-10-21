@@ -12,6 +12,7 @@ import { Telemetry, type Sample } from '../coach/telemetry';
 import { computeSession, starsFor, type SessionResult, type StyleBaseline } from '../coach/metrics';
 import type { CoachEvent } from '../coach/types';
 import { activeProfile, applySession, type KarneUpdate, type SessionSummary } from '../coach/profiles';
+import { captureSessionDetail } from '../coach/sessionRecord';
 import { MissionRunner, type MarkerOpts, type MissionDef, type MissionHost, type HostPlayer } from '../missions/mission';
 import { missionById } from '../missions/catalog';
 import type { WorldBundle } from './worldBundle';
@@ -1029,6 +1030,17 @@ export class Session implements MissionHost {
           { label: 'Manevra', value: String(man) },
           { label: 'Risk', value: res.risk },
         ],
+        detail: captureSessionDetail({
+          result: res,
+          stats: st,
+          scan: {
+            rate: this.monitor.scan.rate(),
+            maxGap: this.monitor.scan.maxGap,
+            shoulder: this.monitor.scan.count('shoulderL') + this.monitor.scan.count('shoulderR'),
+          },
+          events: this.monitor.events,
+          samples: this.telemetry.samples,
+        }),
       };
       karne = applySession(profile, res, summary, {
         mirrorBefore: man ? ((st.turns.mirror + st.laneChanges.mirror) / man) * 100 : null,
