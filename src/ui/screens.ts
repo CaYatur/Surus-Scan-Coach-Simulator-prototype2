@@ -74,7 +74,7 @@ export class Screens {
     host.append(this.root, this.overlay);
   }
 
-  // ——————————————————————— navigation ——————————————————————
+  // ——————————————————————————— navigation ———————————————————————————
 
   show(name: ScreenName, push = true) {
     audio.cue('ui');
@@ -156,7 +156,7 @@ export class Screens {
       const ex = experiment.get();
       const chip = el('button', {
         class: 'profile-chip',
-        html: `<span class=\"avatar\" style=\"background:#8e44ad\">🧪</span><span><b>${esc(ex.participant)}</b><small>Deney · ${esc(ex.condition === 'kontrol' ? 'Kontrol' : 'Geri bildirim')}</small></span>`,
+        html: `<span class="avatar" style="background:#8e44ad">🧪</span><span><b>${esc(ex.participant)}</b><small>Deney · ${esc(ex.condition === 'kontrol' ? 'Kontrol' : 'Geri bildirim')}</small></span>`,
       });
       chip.onclick = () => {
         this.settingsTab = 'deney';
@@ -168,12 +168,1004 @@ export class Screens {
     const chip = el('button', {
       class: 'profile-chip',
       html: p
-        ? `<span class=\"avatar\" style=\"background:${p.color}\">${esc(p.name[0]?.toUpperCase() ?? '?')}</span><span><b>${esc(p.name)}</b><small>Karne ${p.karne.overall} · ${letterGrade(p.karne.overall)}</small></span>`
-        : '<span class=\"avatar\">?</span><span><b>Misafir</b><small>Profil seç / oluştur</small></span>',
+        ? `<span class="avatar" style="background:${p.color}">${esc(p.name[0]?.toUpperCase() ?? '?')}</span><span><b>${esc(p.name)}</b><small>Karne ${p.karne.overall} · ${letterGrade(p.karne.overall)}</small></span>`
+        : '<span class="avatar">?</span><span><b>Misafir</b><small>Profil seç / oluştur</small></span>',
     });
     chip.onclick = () => this.show('profiles');
     return chip;
   }
 
-  // ... (full file continues - the complete version with showSessionDetail is in the local clone at /tmp/scan-coach)
-  // Due to size limits in this call, the full content was prepared in /tmp/screens_payload.json
+  // ——————————————————————————— main ———————————————————————————
+
+  private mainMenu(): HTMLElement {
+    const p = activeProfile();
+    const calibrated = !!p?.baseline.ready;
+    const tile = (icon: string, title: string, sub: string, fn: () => void, cls = '') => {
+      const t = el('button', { class: `menu-tile ${cls}`, html: `<span class="mt-i">${icon}</span><span class="mt-t">${esc(title)}</span><span class="mt-s">${esc(sub)}</span>` });
+      t.onclick = fn;
+      return t;
+    };
+    const hero = el('div', {
+      class: 'hero',
+      html: `<div class="logo"><span class="logo-mark">◎</span><div><h1>SÜRÜŞ KOÇU</h1><p>Scan Coach Simülatörü · tarama, kural ve güvenli sürüş eğitimi</p></div></div>`,
+    });
+    const tiles = el('div', { class: 'menu-tiles' }, [
+      tile('🚗', 'Serbest Sürüş', 'Şehirde dolaş, istediğin görevi seç', () => this.show('free'), 'primary'),
+      tile('🎯', 'Görevler', 'Kalibrasyon, beceri ve şehir görevleri', () => this.show('missions')),
+      tile(calibrated ? '✅' : '🧭', calibrated ? 'Kalibrasyonu Yenile' : 'Kalibrasyon Programı', calibrated ? 'Kişisel profilin hazır' : 'Önerilen ilk adım (~7 dk)', () => this.startMission('calibration')),
+      experiment.feedbackHidden ? null : tile('📋', 'Sürücü Karnesi', p ? `${p.karne.sessions} oturum · ${p.badges.length} rozet` : 'Profil gerektirir', () => this.show('karne')),
+      tile('⚙️', 'Ayarlar', 'Grafik, kontrol, direksiyon, tarama modu', () => this.show('settings')),
+      tile('❓', 'Nasıl Oynanır', 'Kontroller ve puanlama', () => this.show('help')),
+    ]);
+    if (!this.app.isPhone && experiment.active) {
+      tiles.append(tile('📱', 'Telefon Ekranı', 'Deney modunda kapalı (geri bildirim sızmasın)', () => undefined, 'link-tile disabled'));
+    } else if (!this.app.isPhone) {
+      const st = hostBridge.link.status;
+      const n = hostBridge.displays.size;
+      tiles.append(
+        tile('📱', 'Telefonu Bağla', st === 'connected' ? `Bağlı · ${n > 1 ? `${n} ekran` : 'Canlı Koç Ekranı'}` : 'Telefon canlı uyarı ekranı olsun (QR)', () => this.linkPanel(), `link-tile ${st === 'connected' ? 'on' : ''}`)
+      );
+    }
+    const note = el('div', {
+      class: 'main-note',
+      html: !p
+        ? 'İpucu: Karne ve kişisel profil için <b>profil oluşturun</b> (sağ üst). Misafir sürüşleri kaydedilmez.'
+        : !calibrated
+          ? 'İpucu: Önce <b>Kalibrasyon Programı</b>\'nı tamamlayın — kişisel sürüş stiliniz çıkarılır ve sonraki sürüşler buna göre de yorumlanır.'
+          : `Hoş geldin <b>${esc(p.name)}</b>. Son oturum: ${p.sessions[0] ? `${esc(p.sessions[0].missionTitle ?? (p.sessions[0].kind === 'free' ? 'Serbest sürüş' : p.sessions[0].kind))} — ${p.sessions[0].overall} puan` : '—'}`,
+    });
+    const pair = this.app.isPhone && !experiment.active ? displayPairCard(this.app.companion, true) : null;
+    const ex = experiment.get();
+    const banner = experiment.active
+      ? el('div', { class: 'exp-banner', html: `<b>🧪 DENEY MODU</b><span>Katılımcı <b>${esc(ex.participant)}</b> · ${esc(CONDITION_LABEL[ex.condition])} · tohum ${ex.seed ?? 'rastgele'}</span>` })
+      : null;
+    // #7: data stays on the device — unless the phone screen is linked
+    const linked = hostBridge.link.active || this.app.companion.link.active;
+    const version = linked
+      ? 'v1.0 · Three.js · tarayıcıda çalışır · Telefon Ekranı açık: sürüş olayları şifreli olarak telefona aktarılıyor (diğer veriler cihazında kalır)'
+      : 'v1.0 · Three.js · tarayıcıda çalışır, veriler cihazında kalır (Telefon Ekranı kapalı)';
+    const wrap = el('div', { class: 'main' }, [el('div', { class: 'main-top' }, [el('span'), this.profileChip()]), hero, banner, pair, tiles, experiment.active ? null : note, el('div', { class: 'version', text: version })]);
+    return wrap;
+  }
+
+  // ——————————————————————————— free drive setup ———————————————————————————
+
+  private lastCfg(): SessionConfig {
+    return storage.get<SessionConfig>(LAST_CFG, { mapId: 'city', mode: 'free', time: 'noon', weather: 'clear', traffic: 1, peds: 1 });
+  }
+
+  private freeSetup(): HTMLElement {
+    const cfg = { ...this.lastCfg(), mode: 'free' as const };
+    const s = settings.get();
+    const maps = el('div', { class: 'map-cards' });
+    const renderMaps = () => {
+      maps.innerHTML = '';
+      for (const id of ['city', 'training'] as const) {
+        const m = MAPS[id];
+        const c = el('button', {
+          class: `map-card ${cfg.mapId === id ? 'sel' : ''}`,
+          html: `<div class="mc-img mc-${id}"></div><div class="mc-t">${esc(m.name)}</div><div class="mc-s">${esc(m.subtitle)}</div><p>${esc(m.description)}</p>`,
+        });
+        c.onclick = () => {
+          cfg.mapId = id;
+          renderMaps();
+        };
+        maps.append(c);
+      }
+    };
+    renderMaps();
+    const seg = <T extends string>(label: string, opts: [T, string][], get: () => T, set: (v: T) => void) => {
+      const row = el('div', { class: 'seg' });
+      const draw = () => {
+        row.innerHTML = '';
+        for (const [v, t] of opts) {
+          const b = el('button', { class: get() === v ? 'active' : '', text: t });
+          b.onclick = () => {
+            set(v);
+            draw();
+          };
+          row.append(b);
+        }
+      };
+      draw();
+      return el('div', { class: 'field' }, [el('label', { text: label }), row]);
+    };
+    const range = (label: string, get: () => number, set: (v: number) => void, fmt: (v: number) => string) => {
+      const val = el('span', { class: 'rv', text: fmt(get()) });
+      const inp = el('input', { type: 'range', min: 0, max: 2, step: 0.1, value: get() });
+      inp.oninput = () => {
+        set(parseFloat(inp.value));
+        val.textContent = fmt(get());
+      };
+      return el('div', { class: 'field' }, [el('label', {}, [label, val]), inp]);
+    };
+    const density = (v: number) => (v === 0 ? 'Yok' : v < 0.6 ? 'Az' : v < 1.3 ? 'Normal' : v < 1.7 ? 'Yoğun' : 'Çok yoğun');
+    const colors = ['#f2f4f7', '#1f2328', '#b3262b', '#27496d', '#9aa0a6', '#2f5a3a', '#c9a227', '#6f5a45'];
+    const carRow = el('div', { class: 'car-pick' });
+    const drawCars = () => {
+      carRow.innerHTML = '';
+      for (const [t, name] of [['hatch', 'Hatchback'], ['sedan', 'Sedan'], ['suv', 'SUV']] as const) {
+        const b = el('button', { class: `seg-btn ${settings.get().playerCar === t ? 'active' : ''}`, text: name });
+        b.onclick = () => {
+          settings.update({ playerCar: t });
+          drawCars();
+        };
+        carRow.append(b);
+      }
+      for (const c of colors) {
+        const sw = el('button', { class: `swatch ${settings.get().playerColor === c ? 'active' : ''}`, style: `background:${c}` });
+        sw.onclick = () => {
+          settings.update({ playerColor: c });
+          drawCars();
+        };
+        carRow.append(sw);
+      }
+    };
+    drawCars();
+    const form = el('div', { class: 'card form' }, [
+      seg<TimeOfDay>('Zaman', (Object.keys(TIME_LABEL) as TimeOfDay[]).map((k) => [k, TIME_LABEL[k]]), () => cfg.time, (v) => (cfg.time = v)),
+      seg<Weather>('Hava', (Object.keys(WEATHER_LABEL) as Weather[]).map((k) => [k, WEATHER_LABEL[k]]), () => cfg.weather, (v) => (cfg.weather = v)),
+      range('Trafik yoğunluğu', () => cfg.traffic, (v) => (cfg.traffic = v), density),
+      range('Yaya yoğunluğu', () => cfg.peds, (v) => (cfg.peds = v), density),
+      el('div', { class: 'field' }, [el('label', { text: 'Araç' }), carRow]),
+      this.toggleRow('Sürpriz olaylar', 'surpriseEvents', 'Ani fren yapan araçlar, yola çıkan yayalar (tepki ölçümü)'),
+      this.toggleRow('Yol rehber çizgisi', 'routeGuideLine', 'Navigasyon rotası yolda mavi oklarla gösterilir'),
+    ]);
+    void s;
+    const start = this.btn('Sürüşe Başla ▶', 'primary big', () => {
+      storage.set(LAST_CFG, cfg);
+      this.app.startSession({ ...cfg });
+    });
+    return this.frame('Serbest Sürüş', [el('div', { class: 'grid-setup' }, [maps, form]), el('div', { class: 'actions' }, [start])], { wide: true });
+  }
+
+  // ——————————————————————————— missions ———————————————————————————
+
+  private missionTab: MissionCategory = 'calibration';
+
+  private missionsScreen(): HTMLElement {
+    const tabs = el('div', { class: 'seg tabs-big' });
+    const grid = el('div', { class: 'mission-grid' });
+    const p = activeProfile();
+    const draw = () => {
+      tabs.innerHTML = '';
+      for (const [k, t] of [['calibration', '🎯 Kalibrasyon'], ['skill', '🧩 Beceri'], ['city', '🏙️ Şehir']] as [MissionCategory, string][]) {
+        const b = el('button', { class: this.missionTab === k ? 'active' : '', text: t });
+        b.onclick = () => {
+          this.missionTab = k;
+          draw();
+        };
+        tabs.append(b);
+      }
+      grid.innerHTML = '';
+      for (const m of MISSIONS.filter((x) => x.category === this.missionTab)) grid.append(this.missionCard(m, p));
+    };
+    draw();
+    return this.frame('Görevler', [tabs, grid], { wide: true });
+  }
+
+  private missionCard(m: MissionDef, p: Profile | null): HTMLElement {
+    const best = p?.missionBest[m.id];
+    const cond = m.conditions ? `${m.conditions.time ? TIME_LABEL[m.conditions.time] : ''}${m.conditions.weather ? ' · ' + WEATHER_LABEL[m.conditions.weather] : ''}` : '';
+    const card = el('button', {
+      class: 'mission-card',
+      html: `<div class="mc-top"><span class="mc-icon">${m.icon}</span><span class="mc-diff">${'●'.repeat(m.difficulty)}<span class="off">${'●'.repeat(3 - m.difficulty)}</span></span></div>
+        <div class="mc-title">${esc(m.title)}</div><div class="mc-sub">${esc(m.subtitle)}</div>
+        <p>${esc(m.description)}</p>
+        <div class="mc-tags">${m.skills.map((s) => `<span>${esc(s)}</span>`).join('')}</div>
+        <div class="mc-foot"><span>⏱ ~${m.minutes} dk · ${esc(MAPS[m.map].name)}${cond ? ' · ' + esc(cond) : ''}</span>${best ? `<span>${stars(best.stars)} ${best.score}</span>` : '<span class="muted">Yeni</span>'}</div>`,
+    });
+    card.onclick = () => this.startMission(m.id);
+    return card;
+  }
+
+  private startMission(id: string) {
+    const m = missionById(id);
+    if (!m) return;
+    const base = this.lastCfg();
+    this.app.startSession({ mapId: m.map, mode: 'mission', missionId: id, time: m.conditions?.time ?? 'noon', weather: m.conditions?.weather ?? 'clear', traffic: m.conditions?.traffic ?? base.traffic, peds: m.conditions?.peds ?? 1 });
+  }
+
+  // ——————————————————————————— karne ———————————————————————————
+
+  private karneScreen(): HTMLElement {
+    const p = activeProfile();
+    if (!p) {
+      return this.frame('Sürücü Karnesi', [
+        el('div', { class: 'card center', html: '<p>Karne için bir profil seçin veya oluşturun.</p>' }, [this.btn('Profiller', 'primary', () => this.show('profiles'))]),
+      ]);
+    }
+    const k = p.karne;
+    const hist = k.history;
+    const trend = hist.length
+      ? lineChart(
+          [
+            { values: [{ x: 0, y: 70 }, ...hist.map((h, i) => ({ x: i + 1, y: h.overall }))], color: '#35a7ff', label: 'Karne notu', fill: true },
+            { values: hist.map((h, i) => ({ x: i + 1, y: h.session })), color: '#ffa726', label: 'Oturum puanı', dashed: true },
+          ],
+          { yMin: 0, yMax: 100, h: 180, xFmt: (x) => (Math.round(x) === 0 ? 'başlangıç' : `#${Math.round(x)}`) }
+        )
+      : '<p class="muted">Henüz oturum yok.</p>';
+    const b = p.baseline;
+    const badgeHtml = Object.entries(BADGES)
+      .map(([id, bd]) => `<div class="badge ${p.badges.includes(id) ? 'got' : ''}" title="${esc(bd.desc)}"><span>${bd.icon}</span><b>${esc(bd.title)}</b><small>${esc(bd.desc)}</small></div>`)
+      .join('');
+    const sessions = p.sessions
+      .slice(0, 15)
+      .map(
+        (s) =>
+          `<tr data-sid="${esc(s.id)}" style="cursor:pointer"><td>${fmtDate(s.at)}</td><td>${esc(s.missionTitle ?? (s.kind === 'free' ? 'Serbest sürüş' : s.kind === 'calibration' ? 'Kalibrasyon' : 'Görev'))}${s.stars != null ? ' ' + stars(s.stars) : ''}</td><td>${esc(s.map)}</td><td>${esc(s.conditions)}</td><td>${s.distanceKm.toFixed(1)} km</td><td style="color:${scoreColor(s.overall)}"><b>${s.overall}</b> ${s.grade}</td></tr>`
+      )
+      .join('');
+    const content = el('div', {
+      html: `<div class="karne-top">
+        <div class="card kt-main"><span class="avatar big" style="background:${p.color}">${esc(p.name[0]?.toUpperCase() ?? '?')}</span>
+          <div><h3>${esc(p.name)}</h3><div class="muted">${k.sessions} oturum · ${p.totals.km.toFixed(1)} km · ${Math.round(p.totals.minutes)} dk</div>
+          <div class="muted">${p.calibratedAt ? `Kalibre: ${fmtDate(p.calibratedAt)}` : 'Kalibre edilmedi'}</div></div>
+          <div class="kt-score" style="color:${scoreColor(k.overall)}"><b>${k.overall}</b><span>${letterGrade(k.overall)}</span></div></div>
+        <div class="card center">${radarSvg(k.components, undefined, 250)}</div>
+      </div>
+      <div class="card"><h3>Gelişim</h3>${trend}</div>
+      <div class="grid2">
+        <div class="card"><h3>Kişisel sürüş profili</h3>${
+          b.ready
+            ? `<table class="tbl"><tbody>
+              <tr><td>Hız tercihi</td><td>sınırın %${Math.round(b.speedRatio * 100)}'i</td></tr>
+              <tr><td>Hızlanma / yavaşlama (P90)</td><td>${b.accelP90.toFixed(2)} / ${b.decelP90.toFixed(2)} m/s²</td></tr>
+              <tr><td>Yanal ivme (P90)</td><td>${b.latP90.toFixed(2)} m/s²</td></tr>
+              <tr><td>Direksiyon yön değiştirme</td><td>${b.srr.toFixed(1)} /dk</td></tr>
+              <tr><td>Takip mesafesi</td><td>${b.headwayMedian ? b.headwayMedian.toFixed(1) + ' sn' : '—'}</td></tr>
+              <tr><td>Tepki süresi</td><td>${b.reaction ? b.reaction.toFixed(2) + ' sn' : '—'}</td></tr>
+              <tr><td>Ayna sıklığı</td><td>${b.mirrorRate.toFixed(1)} /dk</td></tr>
+              <tr><td>Sinyal öncesi süre</td><td>${b.signalLead ? b.signalLead.toFixed(1) + ' sn' : '—'}</td></tr>
+              </tbody></table><p class="muted small">${b.sessions} temiz oturumdan öğrenildi (yavaş güncellenen ortalama).</p>`
+            : '<p class="muted">Kalibrasyon Programı\'nı tamamlayınca kişisel profil burada görünür.</p>'
+        }</div>
+        <div class="card"><h3>Bileşenler</h3>${COMPONENTS.map((c) => `<div class="sc-row big"><span>${COMPONENT_META[c].title}</span><div class="sc-bar"><i style="width:${k.components[c]}%;background:${scoreColor(k.components[c])}"></i></div><b>${k.components[c]}</b></div>`).join('')}</div>
+      </div>
+      <div class="card"><h3>Rozetler (${p.badges.length}/${Object.keys(BADGES).length})</h3><div class="badges">${badgeHtml}</div></div>
+      <div class="card"><h3>Son oturumlar</h3>${sessions ? `<table class="tbl"><thead><tr><th>Tarih</th><th>Oturum</th><th>Harita</th><th>Koşullar</th><th>Mesafe</th><th>Puan</th></tr></thead><tbody>${sessions}</tbody></table>` : '<p class="muted">—</p>'}</div>`,
+    });
+    content.querySelectorAll('tr[data-sid]').forEach((row) => {
+      row.addEventListener('click', () => {
+        const sid = row.getAttribute('data-sid');
+        const s = p.sessions.find((x) => x.id === sid);
+        if (s) this.showSessionDetail(s);
+      });
+    });
+    return this.frame('Sürücü Karnesi', [content], { wide: true });
+  }
+
+  private showSessionDetail(s: import('../coach/profiles').SessionSummary) {
+    const compBars = COMPONENTS.map((c) => `<div class="sc-row big"><span>${COMPONENT_META[c].title}</span><div class="sc-bar"><i style="width:${s.components[c]}%;background:${scoreColor(s.components[c])}"></i></div><b>${s.components[c]}</b></div>`).join('');
+    const tips = s.tips?.length ? `<ol class="tips">${s.tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ol>` : '<p class="muted">—</p>';
+    const strengths = s.strengths?.length ? `<ul class="tips">${s.strengths.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '<p class="muted">—</p>';
+    const insights = s.insights?.length ? s.insights.map((ins) => `<div class="sc-row"><span>${esc(ins.title)}</span><b style="color:${scoreColor(ins.score ?? 0)}">${ins.score ?? '—'}</b></div>`).join('') : '';
+    const stats = s.keyStats?.length ? `<table class="tbl"><tbody>${s.keyStats.map((ks) => `<tr><td>${esc(ks.label)}</td><td>${esc(ks.value)}</td></tr>`).join('')}</tbody></table>` : '';
+    const content = el('div', {
+      html: `<div class="card"><h3>${esc(s.missionTitle ?? (s.kind === 'free' ? 'Serbest sürüş' : 'Oturum'))}</h3>
+        <p class="muted">${fmtDate(s.at)} · ${esc(s.map)} · ${esc(s.conditions)} · ${s.distanceKm.toFixed(1)} km · ${Math.round(s.durationSec / 60)} dk</p>
+        <div class="kt-score" style="color:${scoreColor(s.overall)}"><b>${s.overall}</b> ${s.grade} · Risk: ${esc(s.risk)}${s.styleAdherence != null ? ` · Stil ${s.styleAdherence}` : ''}</div>
+      </div>
+      <div class="card"><h3>Bileşenler</h3>${compBars}</div>
+      <div class="grid2">
+        <div class="card"><h3>Koç önerileri</h3>${tips}</div>
+        <div class="card"><h3>Güçlü yönler</h3>${strengths}</div>
+      </div>
+      ${insights ? `<div class="card"><h3>Belirti okumaları</h3>${insights}</div>` : ''}
+      ${stats ? `<div class="card"><h3>Ana istatistikler</h3>${stats}</div>` : ''}
+      <div class="actions">${this.btn('← Geri', 'ghost', () => this.back()).outerHTML}</div>`,
+    });
+    this.root.innerHTML = '';
+    this.root.append(this.frame('Oturum Detayı', [content], { wide: true }));
+  }
+
+  // ——————————————————————————— profiles ———————————————————————————
+
+  private profilesScreen(): HTMLElement {
+    const list = el('div', { class: 'profile-list' });
+    const draw = () => {
+      list.innerHTML = '';
+      const act = activeProfileId();
+      const guest = el('div', { class: `profile-row ${!act ? 'sel' : ''}`, html: '<span class="avatar">?</span><div><b>Misafir</b><small>Kayıt tutulmaz</small></div>' });
+      guest.append(this.btn(act ? 'Seç' : 'Seçili', act ? '' : 'ghost', () => {
+        selectProfile(null);
+        draw();
+      }));
+      list.append(guest);
+      for (const p of loadProfiles()) {
+        const row = el('div', {
+          class: `profile-row ${act === p.id ? 'sel' : ''}`,
+          html: `<span class="avatar" style="background:${p.color}">${esc(p.name[0]?.toUpperCase() ?? '?')}</span><div><b>${esc(p.name)}</b><small>Karne ${p.karne.overall} · ${p.karne.sessions} oturum · ${p.baseline.ready ? 'kalibre' : 'kalibre değil'}</small></div>`,
+        });
+        row.append(
+          this.btn(act === p.id ? 'Seçili' : 'Seç', act === p.id ? 'ghost' : 'primary', () => {
+            selectProfile(p.id);
+            draw();
+          }),
+          this.btn('Ad', 'ghost', () => {
+            const n = prompt('Yeni ad:', p.name);
+            if (n) renameProfile(p.id, n);
+            draw();
+          }),
+          this.btn('Sil', 'danger', () => {
+            if (confirm(`"${p.name}" profili ve tüm karnesi silinsin mi?`)) deleteProfile(p.id);
+            draw();
+          })
+        );
+        list.append(row);
+      }
+    };
+    draw();
+    const name = el('input', { type: 'text', placeholder: 'Sürücü adı', maxlength: 28 });
+    const create = this.btn('Profil oluştur', 'primary', () => {
+      if (!name.value.trim()) {
+        name.focus();
+        return;
+      }
+      createProfile(name.value);
+      name.value = '';
+      draw();
+    });
+    return this.frame('Profiller', [el('div', { class: 'card' }, [list]), el('div', { class: 'card row' }, [name, create])]);
+  }
+
+  // ——————————————————————————— settings ———————————————————————————
+
+  private settingsTab = 'grafik';
+
+  private toggleRow(label: string, key: keyof Settings, desc = ''): HTMLElement {
+    const inp = el('input', { type: 'checkbox' }) as HTMLInputElement;
+    inp.checked = !!settings.get()[key];
+    inp.onchange = () => settings.update({ [key]: inp.checked, ...(PRESET_KEYS.includes(key) ? { controlPreset: 'custom' } : {}) } as Partial<Settings>);
+    return el('label', { class: 'toggle-row' }, [el('div', {}, [el('b', { text: label }), desc ? el('small', { text: desc }) : null]), el('span', { class: 'switch' }, [inp, el('i')])]);
+  }
+
+  private sliderRow(label: string, key: keyof Settings, min: number, max: number, step: number, fmt: (v: number) => string, desc = ''): HTMLElement {
+    const v = settings.get()[key] as number;
+    const out = el('span', { class: 'rv', text: fmt(v) });
+    const inp = el('input', { type: 'range', min, max, step, value: v }) as HTMLInputElement;
+    inp.oninput = () => {
+      settings.update({ [key]: parseFloat(inp.value) } as Partial<Settings>);
+      out.textContent = fmt(parseFloat(inp.value));
+    };
+    return el('div', { class: 'field' }, [el('label', {}, [label, out]), inp, desc ? el('small', { class: 'muted', text: desc }) : null]);
+  }
+
+  private bindingTable(redraw: () => void): HTMLElement {
+    const wrap = el('div', { class: 'bind-grid' });
+    const map = bindings();
+    let group = '';
+    for (const m of BIND_META) {
+      if (m.group !== group) {
+        group = m.group;
+        wrap.append(el('div', { class: 'bind-group', text: group }));
+      }
+      const keys = el('div', { class: 'bind-keys' });
+      for (let slot = 0; slot < 2; slot++) {
+        const code = map[m.action][slot];
+        const b = el('button', { class: `kbtn ${code ? '' : 'empty'}`, text: code ? keyLabel(code) : '+' });
+        b.onclick = () => this.captureKey(m.action, slot, b, redraw);
+        keys.append(b);
+      }
+      wrap.append(el('div', { class: 'bind-row' }, [el('div', {}, [el('b', { text: m.label }), m.hint ? el('small', { class: 'muted', text: m.hint }) : null]), keys]));
+    }
+    return wrap;
+  }
+
+  private captureKey(action: BindAction, slot: number, btn: HTMLElement, redraw: () => void) {
+    btn.textContent = 'tuşa bas…';
+    btn.classList.add('capturing');
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      window.removeEventListener('keydown', onKey, true);
+      if (e.code !== 'Escape') rebind(action, e.code, slot);
+      redraw();
+    };
+    // capture before the app's own handlers (Esc would otherwise close the menu)
+    window.addEventListener('keydown', onKey, true);
+  }
+
+  private settingsScreen(): HTMLElement {
+    const tabs: [string, string][] = [
+      ['grafik', 'Grafik'],
+      ['kamera', 'Kamera'],
+      ['kontrol', 'Kontroller'],
+      ['tarama', 'Tarama modu'],
+      ['ses', 'Ses'],
+      ['koc', 'Koçluk'],
+      ['baglanti', 'Telefon Ekranı'],
+      ['deney', 'Deney'],
+      ['veri', 'Veri'],
+    ];
+    const bar = el('div', { class: 'seg tabs-big' });
+    const body = el('div', { class: 'card settings-body' });
+    const draw = () => {
+      window.clearInterval(this.settingsTimer);
+      bar.innerHTML = '';
+      for (const [k, t] of tabs) {
+        const b = el('button', { class: this.settingsTab === k ? 'active' : '', text: t });
+        b.onclick = () => {
+          this.settingsTab = k;
+          draw();
+        };
+        bar.append(b);
+      }
+      body.innerHTML = '';
+      body.append(...this.settingsTabContent(this.settingsTab, draw));
+    };
+    draw();
+    return this.frame('Ayarlar', [bar, body], { wide: true });
+  }
+
+  private settingsTabContent(tab: string, redraw: () => void): HTMLElement[] {
+    const s = settings.get();
+    switch (tab) {
+      case 'baglanti':
+        if (experiment.active) return [el('p', { class: 'exp-lock', text: '🔒 Deney modu açıkken telefon eşleşmesi kilitlidir (kontrol grubuna geri bildirim sızmaması için). Deney sekmesinden kapatabilirsiniz.' })];
+        return linkSettings(this.app.companion, () => this.linkPanel(), this.app.isPhone);
+      case 'deney':
+        return this.experimentSettings(redraw);
+      case 'grafik': {
+        const seg = el('div', { class: 'seg quality' });
+        const names: Record<QualityLevel, string> = { low: 'Düşük', medium: 'Orta', high: 'Yüksek', ultra: 'Ultra' };
+        for (const q of ['low', 'medium', 'high', 'ultra'] as QualityLevel[]) {
+          const b = el('button', { class: s.quality === q ? 'active' : '', html: `${names[q]}${this.app.detectedQuality === q ? '<small>önerilen</small>' : ''}` });
+          b.onclick = () => {
+            settings.update({ quality: q, qualityAuto: false });
+            this.app.qualityChanged();
+            redraw();
+          };
+          seg.append(b);
+        }
+        return [
+          el('div', { class: 'field' }, [el('label', { text: 'Kalite ön ayarı' }), seg, el('small', { class: 'muted', text: 'Gölgeler, ışıma (bloom), kenar yumuşatma, çözünürlük, çizim mesafesi, trafik/yaya yoğunluğu ve ayna çözünürlüğü birlikte ayarlanır.' })]),
+          this.toggleRow('FPS göstergesi', 'showFps'),
+        ];
+      }
+      case 'kamera':
+        return [
+          this.sliderRow('Görüş açısı (FOV)', 'fov', 55, 95, 1, (v) => `${v}°`, 'Kokpit ve kaput kamerası için'),
+          this.sliderRow('Koltuk yüksekliği', 'seatHeight', -1, 1, 0.1, (v) => (v > 0 ? `+${v.toFixed(1)}` : v.toFixed(1))),
+          this.sliderRow('Koltuk ileri/geri', 'seatForward', -1, 1, 0.1, (v) => (v > 0 ? `+${v.toFixed(1)}` : v.toFixed(1))),
+          this.toggleRow('Baş hareketi (g kuvveti)', 'headMotion', 'Hızlanma ve virajda baş hafifçe hareket eder'),
+          this.toggleRow('Fare ile serbest bakış', 'mouseLook', 'Sağ tuşu basılı tutup sürükleyin'),
+          el('p', { class: 'muted small', html: 'Kamera modları (V): Sürücü koltuğu · Kaput · Takip (yakın) · Takip (uzak) · Kuşbakışı · Eğitmen koltuğu. Takip kameralarında fare tekerleği ile yakınlaştırın.' }),
+        ];
+      case 'kontrol': {
+        const axes = el('div', { class: 'axes' });
+        const pad = el('div', { class: 'muted small' });
+        this.settingsTimer = window.setInterval(() => {
+          const a = Input.padAxes();
+          pad.textContent = Input.padName() ? `Bağlı cihaz: ${Input.padName()}` : 'Gamepad / direksiyon bağlı değil (bir tuşa basın).';
+          axes.innerHTML = a ? a.map((v, i) => `<div class="axis"><span>Eksen ${i}</span><div class="ax-bar"><i style="left:${((v + 1) / 2) * 100}%"></i></div><b>${v.toFixed(2)}</b></div>`).join('') : '';
+        }, 100);
+        const axisSel = (label: string, key: 'wheelSteerAxis' | 'wheelThrottleAxis' | 'wheelBrakeAxis') => {
+          const sel = el('select') as HTMLSelectElement;
+          for (let i = 0; i < 8; i++) sel.append(el('option', { value: i, text: `Eksen ${i}` }));
+          sel.value = String(settings.get()[key]);
+          sel.onchange = () => settings.update({ [key]: parseInt(sel.value) } as Partial<Settings>);
+          const detect = this.btn('Algıla', 'ghost', () => this.detectAxis(key, sel));
+          return el('div', { class: 'field inline' }, [el('label', { text: label }), sel, detect]);
+        };
+        const preset = el('div', { class: 'radio-cards row3' });
+        const presets: [ControlPreset, string, string][] = [
+          ['easy', '🟢 Kolay', 'Otomatik vites (S ile durup geri gider), ABS, otomatik far ve sinyal kapanması, hıza duyarlı direksiyon. Yeni başlayanlar için.'],
+          ['advanced', '🔴 Gelişmiş', 'Manuel şanzıman + debriyaj (motor stop edebilir), fren yalnızca frendir, farlar elle açılır. Sürücü kursu aracına en yakın deneyim.'],
+          ['custom', '⚙️ Özel', 'Aşağıdaki seçenekleri tek tek ayarlayın.'],
+        ];
+        for (const [v, t, d] of presets) {
+          const c = el('button', { class: `radio-card ${s.controlPreset === v ? 'sel' : ''}`, html: `<b>${t}</b><small>${d}</small>` });
+          c.onclick = () => {
+            settings.update({ controlPreset: v, ...(v !== 'custom' ? CONTROL_PRESETS[v] : {}) });
+            redraw();
+          };
+          preset.append(c);
+        }
+        const trans = el('div', { class: 'seg' });
+        for (const [v, t] of [
+          ['auto', 'Otomatik (D/R kendiliğinden)'],
+          ['selector', `Otomatik + vites seçici (${actionKeys('gearD')}=D ${actionKeys('gearR')}=R ${actionKeys('gearN')}=N ${actionKeys('gearP')}=P)`],
+          ['manual', 'Manuel (1–6, R, debriyaj)'],
+        ] as const) {
+          const b = el('button', { class: s.transmission === v ? 'active' : '', text: t });
+          b.onclick = () => {
+            settings.update({ transmission: v, controlPreset: 'custom' });
+            redraw();
+          };
+          trans.append(b);
+        }
+        return [
+          el('div', { class: 'field' }, [el('label', { text: 'Kontrol ön ayarı' }), preset]),
+          el('div', { class: 'field' }, [el('label', { text: 'Şanzıman' }), trans]),
+          s.transmission === 'manual' ? this.toggleRow('Debriyaj yardımı', 'clutchAssist', 'Açıkken debriyaj otomatik; kapalıyken vites değiştirmek için debriyaja basmalısınız ve motor stop edebilir') : el('div'),
+          this.toggleRow('ABS (kilitlenmeyi önleyici fren)', 'abs', 'Kapalıyken sert frende tekerlekler kilitlenir, direksiyon hakimiyeti azalır'),
+          this.toggleRow('Sinyal otomatik kapansın', 'autoSignalCancel', 'Dönüş tamamlanınca sinyal kendiliğinden kapanır'),
+          this.toggleRow('Otomatik farlar', 'autoLights', 'Karanlıkta ve yağmurda farlar kendiliğinden yanar'),
+          this.sliderRow('Klavye direksiyon hızı', 'keyboardSteerSpeed', 0.5, 2, 0.1, (v) => `${v.toFixed(1)}x`),
+          this.toggleRow('Hıza duyarlı direksiyon (klavye)', 'speedSensitiveSteering', 'Yüksek hızda direksiyon açısı otomatik azalır'),
+          el('h4', { text: 'Gamepad / Direksiyon seti' }),
+          pad,
+          axes,
+          this.sliderRow('Ölü bölge', 'gamepadDeadzone', 0, 0.3, 0.01, (v) => v.toFixed(2)),
+          this.sliderRow('Direksiyon eğrisi', 'gamepadSteerGamma', 1, 2.5, 0.05, (v) => v.toFixed(2), '1 = doğrusal, yüksek = merkezde daha hassas'),
+          this.toggleRow('Direksiyon seti eşlemesi kullan', 'useWheelMapping', 'Logitech G29/G920, Thrustmaster vb. için eksen tabanlı pedal eşlemesi'),
+          axisSel('Direksiyon ekseni', 'wheelSteerAxis'),
+          axisSel('Gaz pedalı ekseni', 'wheelThrottleAxis'),
+          axisSel('Fren pedalı ekseni', 'wheelBrakeAxis'),
+          this.toggleRow('Pedallar ters (1 = bırakılmış)', 'wheelPedalsInverted'),
+          el('h4', { text: 'Tuş atamaları' }),
+          el('p', { class: 'muted small', text: 'Bir tuşa tıklayın, sonra yeni tuşa basın (Esc: iptal). Aynı tuş başka bir işlevdeyse oradan kaldırılır.' }),
+          this.bindingTable(redraw),
+          el('div', { class: 'row' }, [this.btn('Varsayılan tuşlar', 'ghost', () => {
+            resetBindings();
+            redraw();
+          })]),
+        ];
+      }
+      case 'tarama': {
+        const modes: [Settings['scanMode'], string, string][] = [
+          ['keys', 'Bakış tuşları + sinyal (önerilen)', 'Z sol ayna, C sağ ayna, X iç dikiz, Shift+Z / Shift+C omuz kontrolü. Kamera gerçekten o yöne döner; manevra öncesi Ayna → Sinyal → Omuz sırası puanlanır.'],
+          ['webcam', 'Webcam kafa takibi', 'Kafanızı çevirerek aynalara bakın (MediaPipe, tamamen cihazınızda çalışır; görüntü hiçbir yere gönderilmez). Tuşlar da çalışmaya devam eder.'],
+          ['legacy', 'Tek tuş proxy (eski)', 'Bakış tuşlarından (Z / X / C) herhangi biri = "ayna/omuz baktım". Basit ama yön ayırt etmez.'],
+        ];
+        const list = el('div', { class: 'radio-cards' });
+        for (const [v, t, d] of modes) {
+          const c = el('button', { class: `radio-card ${s.scanMode === v ? 'sel' : ''}`, html: `<b>${t}</b><small>${d}</small>` });
+          c.onclick = () => {
+            settings.update({ scanMode: v });
+            if (v !== 'webcam') this.app.head.stop();
+            redraw();
+          };
+          list.append(c);
+        }
+        const out: HTMLElement[] = [list];
+        if (s.scanMode === 'webcam') {
+          const st = el('div', { class: 'webcam-status' });
+          const upd = () => {
+            const h = this.app.head;
+            const deg = (r: number) => ((r * 180) / Math.PI).toFixed(0);
+            st.innerHTML = `Durum: <b>${{ off: 'kapalı', loading: 'yükleniyor…', running: 'çalışıyor', 'no-face': 'yüz görünmüyor', error: 'hata' }[h.status]}</b>${h.error ? ` — ${esc(h.error)}` : ''}${h.status === 'running' ? ` · yaw ${deg(h.yaw)}° · pitch ${deg(h.pitch)}° · bakış: <b>${h.glance}</b>` : ''}`;
+          };
+          this.settingsTimer = window.setInterval(() => {
+            this.app.head.update();
+            upd();
+          }, 100);
+          upd();
+          out.push(
+            el('div', { class: 'row' }, [
+              this.btn('Kamerayı başlat', 'primary', async () => {
+                await this.app.head.start(document.getElementById('app')!);
+                upd();
+              }),
+              this.btn('Düz bak → merkezle', '', () => this.app.head.recenter()),
+              this.btn('Yönü ters çevir', 'ghost', () => (this.app.head.invert = !this.app.head.invert)),
+              this.btn('Durdur', 'ghost', () => this.app.head.stop()),
+            ]),
+            st,
+            this.sliderRow('Ayna eşiği (kafa dönüşü)', 'webcamYawThreshold', 10, 35, 1, (v) => `${v}°`, 'Bu açının üzerinde yan ayna, ~2.4 katında omuz kontrolü sayılır. Yukarı bakış iç dikizdir.'),
+            this.toggleRow('Kafa hareketi kamerayı döndürsün', 'webcamDrivesCamera'),
+            this.toggleRow('Webcam önizlemesi', 'webcamPreview'),
+            el('p', { class: 'muted small', text: 'Gizlilik: Görüntü işleme tarayıcıda yerel olarak yapılır. Model dosyaları ilk kullanımda CDN\'den indirilir (internet gerekir).' })
+          );
+        }
+        return out;
+      }
+      case 'ses':
+        return [
+          this.sliderRow('Ana ses', 'masterVolume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`),
+          this.sliderRow('Motor sesi', 'engineVolume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`),
+          this.toggleRow('Sesli navigasyon', 'voiceNav', 'Türkçe konuşma sentezi (tarayıcı desteğine bağlı)'),
+          this.toggleRow('Sesli koç uyarıları', 'voiceCoach', 'İhlalleri sesli okur'),
+        ];
+      case 'koc': {
+        const hud = el('div', { class: 'seg' });
+        for (const [v, t] of [['full', 'Tam'], ['minimal', 'Sade'], ['off', 'Kapalı']] as const) {
+          const b = el('button', { class: s.hudMode === v ? 'active' : '', text: t });
+          b.onclick = () => {
+            settings.update({ hudMode: v });
+            redraw();
+          };
+          hud.append(b);
+        }
+        return [
+          el('div', { class: 'field' }, [el('label', { text: 'Gösterge (HUD) modu — U tuşu' }), hud]),
+          this.toggleRow('Canlı koç ipuçları', 'liveCoachHints', 'İhlal ve olumlu davranışlar anında ekranda gösterilir'),
+          this.toggleRow('Yol rehber çizgisi', 'routeGuideLine'),
+          this.toggleRow('Sürpriz olaylar', 'surpriseEvents'),
+          this.toggleRow('Sirenli acil araçlar (ambulans / polis)', 'emergencyVehicles', 'Şehirde zaman zaman arkadan sirenli araç gelir; yol verip vermediğiniz değerlendirilir'),
+          this.toggleRow('Ağır kazada oturumu bitir', 'endOnHardCrash'),
+        ];
+      }
+      case 'veri':
+      default: {
+        const file = el('input', { type: 'file', accept: '.json', class: 'hidden' }) as HTMLInputElement;
+        file.onchange = async () => {
+          const f = file.files?.[0];
+          if (!f) return;
+          try {
+            const n = importProfiles(await f.text());
+            alert(`${n} profil içe aktarıldı.`);
+          } catch (e) {
+            alert('İçe aktarma başarısız: ' + (e as Error).message);
+          }
+          redraw();
+        };
+        return [
+          el('p', { class: 'muted', text: 'Tüm veriler tarayıcınızın yerel depolamasında tutulur. Yedeklemek veya başka cihaza taşımak için dışa aktarın.' }),
+          el('div', { class: 'row' }, [
+            this.btn('Profilleri dışa aktar (JSON)', 'primary', () => download('surus-kocu-profiller.json', exportProfiles(), 'application/json')),
+            this.btn('İçe aktar', '', () => file.click()),
+            file,
+          ]),
+          el('div', { class: 'row' }, [
+            this.btn('Ayarları sıfırla', 'ghost', () => {
+              settings.update({ ...DEFAULT_SETTINGS });
+              this.app.qualityChanged();
+              redraw();
+            }),
+            this.btn('Tüm verileri sil', 'danger', () => {
+              if (confirm('Tüm profiller, karneler ve ayarlar silinsin mi?')) {
+                for (const p of loadProfiles()) deleteProfile(p.id);
+                settings.reset();
+                redraw();
+              }
+            }),
+          ]),
+        ];
+      }
+    }
+  }
+
+  private experimentSettings(redraw: () => void): HTMLElement[] {
+    const ex = experiment.get();
+    const locked = experiment.locked;
+    const msg = el('small', { class: 'muted' });
+    const part = el('input', { value: ex.participant, placeholder: 'ör. P012', maxlength: 16, spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+    const cond = el('select') as HTMLSelectElement;
+    for (const c of ['feedback', 'kontrol'] as Condition[]) cond.append(el('option', { value: c, text: CONDITION_LABEL[c] }));
+    cond.value = ex.condition;
+    const seed = el('input', { value: ex.seed ?? '', placeholder: 'boş = her oturum rastgele', inputmode: 'numeric' }) as HTMLInputElement;
+    for (const i of [part, cond, seed]) {
+      i.disabled = locked;
+      i.onkeydown = (e) => e.stopPropagation();
+    }
+    const save = (patch: Parameters<typeof experiment.update>[0]) => {
+      if (!experiment.update(patch)) msg.textContent = locked ? 'Oturum sürerken değiştirilemez.' : 'Geçersiz değer (katılımcı kodu: 1–16 harf/rakam, - veya _).';
+      else {
+        if (experiment.active) hostBridge.disconnect();
+        redraw();
+      }
+    };
+    part.onchange = () => {
+      const v = part.value.trim();
+      if (v && !validParticipant(v)) {
+        msg.textContent = 'Katılımcı kodu yalnızca harf, rakam, - ve _ içerebilir (en fazla 16). Gerçek isim girmeyin.';
+        return;
+      }
+      save(v ? { participant: v } : { participant: '', enabled: false });
+    };
+    cond.onchange = () => save({ condition: cond.value as Condition });
+    seed.onchange = () => {
+      const v = seed.value.trim();
+      const n = Number(v);
+      if (v && (!Number.isInteger(n) || n < 1 || n > 4294967295)) {
+        msg.textContent = 'Tohum 1 ile 4294967295 arasında bir tam sayı olmalı.';
+        return;
+      }
+      save({ seed: v ? n : null });
+    };
+    const toggle = (label: string, key: 'enabled' | 'autoExport', desc: string) => {
+      const inp = el('input', { type: 'checkbox' }) as HTMLInputElement;
+      inp.checked = ex[key];
+      inp.disabled = locked;
+      inp.onchange = () => {
+        if (key === 'enabled' && inp.checked && !validParticipant(part.value.trim())) {
+          inp.checked = false;
+          msg.textContent = 'Deney modunu açmak için önce anonim bir katılımcı kodu girin.';
+          return;
+        }
+        save(key === 'enabled' && inp.checked ? { enabled: true, participant: part.value.trim() } : { [key]: inp.checked });
+      };
+      return el('label', { class: 'toggle-row' }, [el('div', {}, [el('b', { text: label }), el('small', { text: desc })]), el('span', { class: 'switch' }, [inp, el('i')])]);
+    };
+    const rows = loggedSummaries();
+    return [
+      el('p', {
+        class: 'muted',
+        html: 'Pilot çalışma (koçluk açık / kapalı) için. <b>Kontrol</b> koşulunda canlı puan, koçluk uyarıları, tarama göstergesi ve oturum sonu raporu <b>gösterilmez</b>; sürüş yine izlenir ve telemetri kaydedilir. Telefon eşleşmesi deney boyunca kilitlidir ve oturumlar profillerin karnesine yazılmaz.',
+      }),
+      el('p', { class: locked ? 'exp-lock' : 'hidden', text: '🔒 Oturum sürüyor — katılımcı kodu, koşul ve tohum oturum bitene kadar kilitli.' }),
+      toggle('Deney modu', 'enabled', experiment.active ? 'Açık' : 'Kapalı'),
+      el('div', { class: 'exp-form' }, [
+        el('div', { class: 'field' }, [el('label', { text: 'Katılımcı kodu (anonim)' }), part]),
+        el('div', { class: 'field' }, [el('label', { text: 'Koşul' }), cond]),
+        el('div', { class: 'field' }, [el('label', { text: 'Oturum tohumu (trafik/yaya)' }), seed]),
+      ]),
+      msg,
+      toggle('Oturum sonunda otomatik dışa aktar', 'autoExport', 'Telemetri CSV + oturum JSON + tek satırlık deney özeti CSV indirilir'),
+      el('div', { class: 'row' }, [
+        this.btn(`Tüm deney özetlerini indir (${rows.length} oturum)`, 'primary', () => download(`deney-ozetleri-${new Date().toISOString().slice(0, 10)}.csv`, summaryCsv(loggedSummaries()), 'text/csv')),
+        this.btn('Özet kaydını temizle', 'ghost', () => {
+          if (confirm('Bu tarayıcıdaki tüm deney özet satırları silinsin mi? (İndirilmiş dosyalar etkilenmez.)')) {
+            clearSummaryLog();
+            redraw();
+          }
+        }),
+      ]),
+      el('p', {
+        class: 'muted small',
+        html: 'Özet sütunları: manevra öncesi doğru ayna kontrolü oranı (<code>scan_before_maneuver_rate</code>), en uzun aynasız süre (<code>max_mirror_gap_s</code>), TTC ramak kala sayısı ve en düşük TTC, hız ihlali süresi, çarpışma, kırmızı ışık, genel puan ve görev başarısı. Her satırda katılımcı kodu, koşul, görev ve tohum bulunur.',
+      }),
+    ];
+  }
+
+  /** Control condition end of a drive: no score or report, files are exported in the background. */
+  experimentDone(d: ReportData, actions: ReportActions) {
+    const ex = experiment.get();
+    const box = el('div', { class: 'exp-done' }, [
+      el('h2', { text: 'Oturum tamamlandı' }),
+      el('p', { class: 'muted', text: `Katılımcı ${ex.participant} · ${d.mission ? d.mission.def.title : 'Serbest sürüş'} · ${Math.round(d.result.durationSec / 60)} dk` }),
+      el('p', { text: 'Teşekkürler! Lütfen araştırmacının yönergesini bekleyin.' }),
+      el('div', { class: 'row' }, [
+        actions.onContinue ? this.btn('Sürüşe devam et', 'primary', actions.onContinue) : null,
+        actions.onRetry ? this.btn(d.mission ? 'Görevi tekrarla' : 'Yeniden başlat', '', actions.onRetry) : null,
+        this.btn('Ana menü', '', actions.onMenu),
+      ]),
+    ]);
+    this.openOverlay(box, 'dim');
+  }
+
+  private detectAxis(key: 'wheelSteerAxis' | 'wheelThrottleAxis' | 'wheelBrakeAxis', sel: HTMLSelectElement) {
+    const base = Input.padAxes();
+    if (!base) {
+      alert('Önce direksiyon/gamepad bağlayın ve bir tuşa basın.');
+      return;
+    }
+    const what = key === 'wheelSteerAxis' ? 'Direksiyonu bir yöne sonuna kadar çevirin' : key === 'wheelThrottleAxis' ? 'Gaz pedalına sonuna kadar basın' : 'Fren pedalına sonuna kadar basın';
+    const note = el('div', { class: 'detect-note', text: `${what}… (3 sn)` });
+    sel.parentElement?.append(note);
+    let best = { i: 0, d: 0 };
+    const t0 = performance.now();
+    const iv = window.setInterval(() => {
+      const a = Input.padAxes();
+      if (a) a.forEach((v, i) => {
+        const d = Math.abs(v - (base[i] ?? 0));
+        if (d > best.d) best = { i, d };
+      });
+      if (performance.now() - t0 > 3000) {
+        window.clearInterval(iv);
+        note.remove();
+        if (best.d > 0.3) {
+          settings.update({ [key]: best.i } as Partial<Settings>);
+          sel.value = String(best.i);
+          if (key !== 'wheelSteerAxis') {
+            const a2 = Input.padAxes();
+            // pressed value near −1 means inverted pedals
+            if (a2) settings.update({ wheelPedalsInverted: (a2[best.i] ?? 0) < 0 });
+          }
+        } else alert('Hareket algılanmadı.');
+      }
+    }, 50);
+  }
+
+  // ——————————————————————————— help ———————————————————————————
+
+  private helpScreen(): HTMLElement {
+    return this.frame('Nasıl Oynanır', [el('div', { class: 'help', html: helpHtml() })], { wide: true });
+  }
+
+  // ——————————————————————————— in-drive overlays ———————————————————————————
+
+  private openOverlay(content: HTMLElement, cls = '', dispose: (() => void) | null = null) {
+    this.disposeOverlay();
+    this.overlayDispose = dispose;
+    this.overlay.innerHTML = '';
+    this.overlay.className = `overlay ${cls}`;
+    const panel = el('div', { class: 'overlay-panel' }, [content]);
+    this.overlay.append(panel);
+    this.overlay.classList.remove('hidden');
+    this.onOverlayChange?.(true);
+    return panel;
+  }
+
+  private disposeOverlay() {
+    const d = this.overlayDispose;
+    this.overlayDispose = null;
+    d?.();
+  }
+
+  /** "Telefonu Bağla" — webcam QR scanner and pairing status. */
+  linkPanel() {
+    const inSession = this.app.inSession();
+    const panel = hostPairPanel(() => {
+      this.closeOverlay();
+      // Refresh the menu underneath (its link status), or go back to the pause menu mid-drive
+      if (this.menusVisible) this.refresh();
+      else if (inSession) this.pauseMenu();
+    });
+    this.openOverlay(panel.root, 'dim link', panel.dispose);
+  }
+
+  closeOverlay() {
+    this.disposeOverlay();
+    this.overlay.classList.add('hidden');
+    this.overlay.innerHTML = '';
+    this.onOverlayChange?.(false);
+  }
+
+  get overlayOpen() {
+    return !this.overlay.classList.contains('hidden');
+  }
+
+  pauseMenu() {
+    const box = el('div', { class: 'pause' }, [
+      el('h2', { text: 'Duraklatıldı' }),
+      this.btn('Devam et', 'primary big', () => {
+        this.closeOverlay();
+        this.app.resume();
+      }),
+      this.btn('Oturumu bitir ve raporu gör', '', () => {
+        this.closeOverlay();
+        this.app.finishSegment();
+      }),
+      this.btn('Yeniden başlat', '', () => {
+        this.closeOverlay();
+        this.app.restartSession();
+      }),
+      this.btn('Ayarlar', '', () => {
+        this.closeOverlay();
+        this.show('settings');
+      }),
+      hostBridge.allowed ? this.btn(hostBridge.link.status === 'connected' ? '📱 Telefon bağlı' : '📱 Telefonu bağla', '', () => this.linkPanel()) : null,
+      this.btn('Nasıl oynanır', '', () => {
+        this.closeOverlay();
+        this.show('help');
+      }),
+      this.btn('Ana menü', 'ghost', () => {
+        this.closeOverlay();
+        this.app.quitToMenu();
+      }),
+    ]);
+    this.openOverlay(box, 'dim');
+  }
+
+  missionBoard(inMission: boolean) {
+    const map = this.app.sessionMapId();
+    const list = MISSIONS.filter((m) => m.board && m.map === map);
+    const p = activeProfile();
+    const grid = el('div', { class: 'mission-grid compact' });
+    for (const m of list) {
+      const c = this.missionCard(m, p);
+      c.onclick = () => {
+        this.closeOverlay();
+        this.app.startBoardMission(m.id);
+      };
+      grid.append(c);
+    }
+    const box = el('div', {}, [
+      el('div', { class: 'ov-head' }, [el('h2', { text: '📋 Görev Panosu' }), this.btn('Kapat (J)', 'ghost', () => {
+        this.closeOverlay();
+        this.app.resume();
+      })]),
+      inMission ? el('p', { class: 'warn-text', text: 'Yeni görev seçersen mevcut görev raporsuz sonlanır.' }) : el('p', { class: 'muted', text: 'Görev bulunduğun yerden başlar. Koşullar (saat/hava/trafik) göreve göre değişebilir.' }),
+      list.length ? grid : el('p', { class: 'muted', text: 'Bu haritada panodan başlatılabilen görev yok. Görevler menüsünü kullanın.' }),
+    ]);
+    this.openOverlay(box, 'dim wide');
+  }
+
+  bigMap() {
+    const cv = el('canvas', { class: 'bigmap', width: 1100, height: 780 }) as HTMLCanvasElement;
+    let pick = this.app.bigMap(cv);
+    const redraw = () => {
+      pick = this.app.bigMap(cv);
+    };
+    const box = el('div', {}, [
+      el('div', { class: 'ov-head' }, [
+        el('h2', { text: '🗺️ Harita' }),
+        el('span', { class: 'muted', text: 'Tıklayınca hedef konur · hedef işaretine tıklayınca kalkar · M / Esc kapat' }),
+        this.btn('Hedefi kaldır', 'ghost', () => {
+          this.app.clearMapTarget();
+          redraw();
+        }),
+        this.btn('Kapat', 'ghost', () => {
+          this.closeOverlay();
+          this.app.resume();
+        }),
+      ]),
+      cv,
+    ]);
+    this.openOverlay(box, 'dim wide');
+    cv.onclick = (e) => {
+      const r = cv.getBoundingClientRect();
+      const stay = pick?.((e.clientX - r.left) * (cv.width / r.width), (e.clientY - r.top) * (cv.height / r.height));
+      if (stay) redraw();
+      else {
+        this.closeOverlay();
+        this.app.resume();
+      }
+    };
+  }
+
+  helpOverlay() {
+    const box = el('div', {}, [
+      el('div', { class: 'ov-head' }, [el('h2', { text: 'Kontroller' }), this.btn('Kapat', 'ghost', () => {
+        this.closeOverlay();
+        this.app.resume();
+      })]),
+      el('div', { class: 'keymap', html: keymapHtml() }),
+    ]);
+    this.openOverlay(box, 'dim');
+  }
+
+  report(): HTMLElement {
+    this.disposeOverlay();
+    this.overlay.innerHTML = '';
+    this.overlay.className = 'overlay dim report';
+    const panel = el('div', { class: 'overlay-panel report-panel' });
+    this.overlay.append(panel);
+    this.overlay.classList.remove('hidden');
+    this.onOverlayChange?.(true);
+    return panel;
+  }
+
+  loading(text: string | null) {
+    let l = document.getElementById('loading');
+    if (!text) {
+      l?.classList.add('hidden');
+      return;
+    }
+    if (!l) {
+      l = el('div', { id: 'loading' });
+      document.getElementById('app')!.append(l);
+    }
+    l.classList.remove('hidden');
+    l.innerHTML = `<div class="spinner"></div><div>${esc(text)}</div>`;
+  }
+}
+
+/** Key reference built from the live bindings. */
+function keymapHtml(): string {
+  const k = (a: BindAction) => promptHtml(a);
+  const s = settings.get();
+  const dev = controlDevice();
+  const gears =
+    s.transmission === 'manual'
+      ? `<tr><td>${k('gearUp')} ${k('gearDown')}</td><td>Vites yükselt / düşür</td><td>${k('gear1')}…${k('gear6')}</td><td>Doğrudan vites · ${k('gearR')} geri · ${k('gearN')} boş</td></tr><tr><td>${k('clutch')}</td><td>Debriyaj${s.clutchAssist ? ' (yardım açık)' : ''}</td><td></td><td></td></tr>`
+      : s.transmission === 'selector'
+        ? `<tr><td>${k('gearD')} ${k('gearR')} ${k('gearN')} ${k('gearP')}</td><td>Vites D / R / N / P</td><td></td><td></td></tr>`
+        : `<tr><td colspan="2">Otomatik: ${k('brake')} ile durup basılı tutun → geri vites; ${k('throttle')} → ileri</td><td>${k('gearR')} ${k('gearD')}</td><td>Geri / ileri seçimi</td></tr>`;
+  return `
+<table class="tbl keys"><tbody>
+<tr><th colspan="2">Sürüş</th><th colspan="2">Tarama & sinyal</th></tr>
+<tr><td>${k('throttle')}</td><td>Gaz</td><td>${k('mirrorL')}</td><td>Sol ayna</td></tr>
+<tr><td>${k('brake')}</td><td>Fren</td><td>${k('mirrorR')}</td><td>Sağ ayna</td></tr>
+<tr><td>${k('steerLeft')} ${k('steerRight')}</td><td>Direksiyon</td><td>${k('mirrorRear')}</td><td>İç dikiz aynası</td></tr>
+<tr><td>${k('handbrake')}</td><td>El freni</td><td>${k('shoulder')} + ${k('mirrorL')}/${k('mirrorR')}</td><td>Sol / sağ omuz kontrolü</td></tr>
+<tr><td>${k('horn')}</td><td>Korna</td><td>${k('signalL')} ${k('signalR')}</td><td>Sol / sağ sinyal</td></tr>
+<tr><td>${k('cruise')}</td><td>Hız sabitleyici (${k('cruiseUp')} ${k('cruiseDown')} ±5)</td><td>${k('hazard')}</td><td>Dörtlü flaşör</td></tr>
+<tr><th colspan="4">Vites</th></tr>
+${gears}
+<tr><th colspan="2">Görünüm</th><th colspan="2">Diğer</th></tr>
+<tr><td>${k('camera')}</td><td>Kamera değiştir (6 mod)</td><td>${k('lights')}</td><td>Farlar</td></tr>
+<tr><td>${dev === 'keyboard' ? 'Sağ tık + sürükle' : k('mirrorL')}</td><td>${dev === 'keyboard' ? 'Serbest bakış' : 'Sağ çubuk: yan ayna, sonuna kadar omuz, yukarı veya aşağı iç dikiz'}</td><td>${k('wipers')}</td><td>Silecek</td></tr>
+<tr><td>${k('map')}</td><td>Harita / hedef seç</td><td>${k('reset')}</td><td>Aracı şeride al</td></tr>
+<tr><td>${k('missions')}</td><td>Görev panosu</td><td>${k('hud')}</td><td>HUD modu</td></tr>
+<tr><td>${k('pause')}</td><td>Duraklat</td><td>${k('recenter')}</td><td>Kafa takibini merkezle</td></tr>
+<tr><th colspan="4">${dev === 'keyboard' ? 'Kontrolcü' : dev === 'playstation' ? 'PlayStation' : dev === 'wheel' ? 'Direksiyon seti' : 'Xbox'}</th></tr>
+<tr><td colspan="4">${dev === 'keyboard' ? `Sol çubuk direksiyon · RT gaz · LT fren · B el freni · LB/RB sinyal · Sağ çubuk ayna ve omuz · sağ çubuk yukarı veya aşağı iç dikiz · Y kamera · X dörtlü · A korna · R3 hız sabitleyici · Menu duraklat · View harita${s.transmission === 'manual' ? ' · D-pad ↑/↓ vites' : ''}. Kontrolcüye geçince bu tablo o aygıtın tuşlarına döner.` : 'Bu tablo şu an kullanılan aygıtın tuşlarını gösterir. Klavyeye geçince harfler geri gelir.'}</td></tr>
+</tbody></table>`;
+}
+
+function helpHtml(): string {
+  return `
+<div class="grid2">
+<div class="card"><h3>Amaç</h3><p>Sürüş Koçu, gerçek trafik kurallarına yakın bir şehirde <b>güvenli ve dikkatli sürüş alışkanlıklarını</b> ölçer. Her oturumun sonunda ayrıntılı bir rapor alırsın; profil oluşturduysan puanların <b>Sürücü Karnesi</b>'ne işlenir.</p>
+<ol><li><b>Kalibrasyon Programı</b> ile başla: kişisel sürüş stilin çıkarılır.</li><li><b>Beceri</b> görevleriyle zayıf yönlerini çalış (park, MSM, tepki).</li><li><b>Şehir</b>de serbest sür, görev panosundan (J) görev seç.</li></ol></div>
+<div class="card"><h3>Ayna → Sinyal → Manevra</h3><p>Şerit değiştirirken ve dönerken güvenli sıra:</p><ol><li>İç dikiz + ilgili yan ayna (${promptHtml('mirrorRear')}, ${promptHtml('mirrorL')}/${promptHtml('mirrorR')})</li><li>Sinyal (${promptHtml('signalL')}/${promptHtml('signalR')}) — en az 1–3 sn önce</li><li>Kör nokta: omuz kontrolü (${promptHtml('shoulder')} + ${promptHtml('mirrorL')}/${promptHtml('mirrorR')})</li><li>Manevra, sonra sinyali kapat</li></ol><p class="muted small">Dönüşlerde sinyal direksiyon düzelince kendiliğinden kapanır; şerit değişiminde kapatmak sana kalır.</p></div>
+<div class="card"><h3>Puanlama</h3><p>5 bileşen: <b>Güvenli sürüş %30</b> (çarpışma, ramak kala/TTC, takip mesafesi, ani manevralar, tepki) · <b>Kural %25</b> (hız, ışık, DUR, öncelik, yaya, sinyal, yön) · <b>Gözlem %20</b> (manevra öncesi ayna, omuz, ayna sıklığı, kavşak taraması) · <b>Araç hâkimiyeti %15</b> (jerk, konfor, direksiyon yön değiştirme) · <b>Görev & güzergâh %10</b>.</p><p>Ağır ihlaller toplam puana tavan koyar (ör. kırmızı ışık 72, ağır kaza 40, yayaya çarpma 20).</p></div>
+<div class="card"><h3>Trafik kuralları</h3><ul><li>Hız sınırları bölgeye göre değişir: sokak 30, cadde 50, şehir merkezi 40, okul/hastane/park çevresi 30, yaya öncelikli çarşı 20, bulvar 60–70, şehir dışı yollar 90, bölünmüş çevre yolu 110 (kavşak yaklaşımı 70, virajlar 90).</li><li>Bölünmüş yolda sağdan gidin, sollamayı soldan yapıp sağa dönün; emniyet şeridinde gidilmez, sağdan sollama yapılmaz.</li><li>Dönel kavşakta içerideki araç önceliklidir; çıkarken sağ sinyal verin.</li><li>Kavşağa yaklaşırken düz (kesintisiz) çizgide şerit değiştirilmez.</li><li>Sirenli ambulans/polis gelince sağa yanaşıp yavaşlayın.</li><li>Hastane ve okul bölgesinde korna çalınmaz.</li><li>Kırmızı ve kırmızı+sarıda geçilmez; sarıda güvenle durabiliyorsan dur.</li><li>DUR levhasında tam dur (0 km/h), yol ver levhasında ana yola öncelik ver.</li><li>Tek yönlü yollara girilmez levhasından girme.</li><li>Yaya geçidinde yayaya yol ver.</li><li>Takip mesafesi en az 2 sn (yağmurda 4 sn).</li><li>Gece ve yağmurda farlar açık.</li></ul></div>
+</div>
+<div class="card">${keymapHtml()}</div>`;
+}

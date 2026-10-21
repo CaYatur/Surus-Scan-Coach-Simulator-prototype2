@@ -50,7 +50,7 @@ const KIND_ICON: Partial<Record<EventKind, string>> = {
   late_signal: '↔️',
   wrong_signal: '↔️',
   signal_left_on: '↔️',
-  solid_line_change: '🛣',
+  solid_line_change: '⛙',
   weaving: '〰️',
   right_overtake: '⏩',
   left_lane_hog: '⏪',
@@ -63,9 +63,9 @@ const KIND_ICON: Partial<Record<EventKind, string>> = {
   idle_attention: '😴',
   msm_good: '✅',
   wrong_lane_turn: '🛣️',
-  hard_brake: '🛴',
-  hard_accel: '🛴',
-  harsh_corner: '🛴',
+  hard_brake: '🛞',
+  hard_accel: '🛞',
+  harsh_corner: '🛞',
   tailgating: '📏',
   near_miss: '⚠️',
   ped_not_yielded: '🚶',
@@ -135,7 +135,6 @@ export class Companion {
   private audioCtx: AudioContext | null = null;
   private wakeLock: { release(): Promise<void> } | null = null;
   private alertTimer = 0;
-  private historyOpen = false;
   private ui!: {
     nofb: HTMLElement;
     conn: HTMLElement;
@@ -238,7 +237,7 @@ export class Companion {
     this.close();
   }
 
-  // ——————————————————————— link ——————————————————————
+  // ——————————————————————————— link ———————————————————————————
 
   private onStatus(s: LinkStatus) {
     if (s === 'connected') {
@@ -306,7 +305,7 @@ export class Companion {
     }
   }
 
-  // ——————————————————————— build ——————————————————————
+  // ——————————————————————————— build ———————————————————————————
 
   private build() {
     const r = this.root;
@@ -318,7 +317,7 @@ export class Companion {
 
     const conn = el('div', { class: 'cmp-conn' }, [el('i'), el('span', { text: 'Bağlı değil' })]);
     const top = el('header', { class: 'cmp-top' }, [
-      el('div', { class: 'cmp-brand', html: '<span class=\"cmp-logo\">◎</span><div><b>CANLI KOÇ</b><small>Sürüş Koçu · ikinci ekran</small></div>' }),
+      el('div', { class: 'cmp-brand', html: '<span class="cmp-logo">◎</span><div><b>CANLI KOÇ</b><small>Sürüş Koçu · ikinci ekran</small></div>' }),
       conn,
     ]);
 
@@ -364,7 +363,7 @@ export class Companion {
     const historyBox = el('section', { class: 'cmp-history hidden' });
     const idle = el('section', {
       class: 'cmp-idle hidden',
-      html: '<div class=\"cmp-idle-car\">🚗</div><b>Bilgisayarda sürüş bekleniyor</b><span>Serbest sürüş veya bir görev başladığında hız, puan ve tüm uyarılar burada anlık görünür.</span>',
+      html: '<div class="cmp-idle-car">🚗</div><b>Bilgisayarda sürüş bekleniyor</b><span>Serbest sürüş veya bir görev başladığında hız, puan ve tüm uyarılar burada anlık görünür.</span>',
     });
 
     const chips = el('div', { class: 'cmp-chips' });
@@ -439,7 +438,7 @@ export class Companion {
     }
   }
 
-  // ——————————————————————— render ——————————————————————
+  // ——————————————————————————— render ———————————————————————————
 
   private render() {
     this.renderConn();
@@ -490,8 +489,8 @@ export class Companion {
     mb.classList.toggle('hidden', !m || mode === 'menu');
     if (m) {
       const icon: Record<string, string> = { done: '✓', failed: '✖', active: '●', pending: '○' };
-      mb.innerHTML = `<div class=\"cmp-m-head\"><span class=\"cmp-m-i\">${esc(m.icon)}</span><div><b>${esc(m.title)}</b><small>${esc(m.subtitle)}</small></div></div><ul>${m.objectives
-        .map((o) => `<li class=\"${esc(o.status)}\"><span>${icon[o.status] ?? '○'}</span>${esc(o.title)}</li>`)
+      mb.innerHTML = `<div class="cmp-m-head"><span class="cmp-m-i">${esc(m.icon)}</span><div><b>${esc(m.title)}</b><small>${esc(m.subtitle)}</small></div></div><ul>${m.objectives
+        .map((o) => `<li class="${esc(o.status)}"><span>${icon[o.status] ?? '○'}</span>${esc(o.title)}</li>`)
         .join('')}</ul>`;
     }
     this.renderReport();
@@ -513,76 +512,228 @@ export class Companion {
     const frac = Math.min(1, Math.abs(kmh) / max);
     const a0 = -GAUGE_SWEEP / 2;
     u.speedArc.setAttribute('d', arcPath(100, 100, 82, a0, a0 + Math.max(0.1, GAUGE_SWEEP * frac)));
-    const col = over ? '#ff4d6d' : near ? '#f5c542' : '#4cd07d';
-    u.speedArc.style.stroke = col;
-    u.sigL.classList.toggle('on', !!t?.signalL);
-    u.sigR.classList.toggle('on', !!t?.signalR);
-    const score = t?.score ?? null;
-    u.scoreVal.textContent = score == null ? '—' : String(score);
-    u.scoreVal.style.color = score == null ? '' : scoreColor(score);
-    u.grade.textContent = score == null ? 'Puan' : (t?.grade ?? '');
-    u.scoreArc.style.stroke = score == null ? '#3a4258' : scoreColor(score);
-    const c = 2 * Math.PI * 50;
-    u.scoreArc.style.strokeDasharray = `${((score ?? 0) / 100) * c} ${c}`;
-    u.timer.textContent = mmss(t?.elapsed ?? 0);
-    // components
-    const comps = this.ui.comps;
-    comps.innerHTML = '';
-    if (t?.components) {
-      for (const k of COMPONENTS) {
-        const v = t.components[k];
-        comps.append(el('div', { class: 'cmp-comp', html: `<span>${COMPONENT_META[k].title}</span><div class=\"cmp-bar\"><i style=\"width:${v}%;background:${scoreColor(v)}\"></i></div><b>${v}</b>` }));
-      }
+    u.speedArc.style.stroke = over ? 'var(--bad)' : near ? 'var(--warn)' : 'var(--accent)';
+    u.sigL.classList.toggle('on', t?.signal === 'left' || t?.signal === 'hazard');
+    u.sigR.classList.toggle('on', t?.signal === 'right' || t?.signal === 'hazard');
+    u.timer.textContent = t ? mmss(t.t) : '0:00';
+    const ov = t?.overall;
+    if (ov != null) {
+      const c = 2 * Math.PI * 50;
+      u.scoreArc.setAttribute('stroke-dasharray', `${((c * ov) / 100).toFixed(1)} ${c.toFixed(1)}`);
+      u.scoreArc.style.stroke = scoreColor(ov);
+      u.scoreVal.textContent = String(Math.round(ov));
+      u.scoreVal.style.color = scoreColor(ov);
+      u.grade.textContent = 'Canlı puan';
+    } else {
+      u.scoreArc.setAttribute('stroke-dasharray', '0 400');
+      u.scoreVal.textContent = '—';
+      u.scoreVal.style.color = '';
+      u.grade.textContent = 'Puan hesaplanıyor';
     }
-    // stats
-    const st = this.ui.stats;
-    st.innerHTML = t?.stats
-      ? `<span>${t.stats.distanceKm.toFixed(1)} km</span><span>${t.stats.avgKmh} km/h</span><span>${t.stats.maxKmh} max</span><span>${t.stats.violations} ihlal</span><span>${t.stats.crashes} kaza</span>`
+    const comps = t?.components;
+    u.comps.innerHTML = COMPONENTS.map((k) => {
+      const v = comps ? Math.round(comps[k]) : null;
+      const meta = COMPONENT_META[k];
+      return `<div class="cmp-comp"><span>${esc(meta.title)}</span><div class="cmp-bar"><i style="width:${v ?? 0}%;background:${meta.color}"></i></div><b>${v ?? '—'}</b></div>`;
+    }).join('');
+    u.stats.innerHTML = t
+      ? `<span>📍 ${t.km.toFixed(1)} km</span><span>🪞 ${t.mirrorRate.toFixed(1)} ayna/dk</span><span>🕑 ${mmss(t.t)}</span>`
       : '';
   }
 
   private renderCounters() {
-    const c = this.ui.counters;
-    c.innerHTML = '';
     const groups: EventGroup[] = ['crash', 'violation', 'warning', 'positive'];
-    for (const g of groups) {
-      const m = GROUP_META[g];
-      c.append(el('div', { class: 'cmp-cnt', html: `<span style=\"color:${m.color}\">${m.icon}</span><b>${this.counts[g]}</b><small>${m.title}</small>` }));
-    }
+    this.ui.counters.innerHTML = groups
+      .map((g) => `<div class="cmp-count" style="--c:${GROUP_META[g].color}"><span>${GROUP_META[g].icon}</span><b>${this.counts[g]}</b><small>${GROUP_META[g].title}</small></div>`)
+      .join('');
+  }
+
+  private eventItem(e: LinkEvent, fresh = false): HTMLElement {
+    const g = eventGroup(e);
+    const icon = KIND_ICON[e.kind] ?? GROUP_META[g].icon;
+    const item = el('div', { class: `cmp-ev ${g} sev-${e.severity} ${fresh ? 'fresh' : ''}` }, [
+      el('span', { class: 'cmp-ev-i', text: icon }),
+      el('div', { class: 'cmp-ev-b' }, [el('b', { text: e.label }), el('span', { text: e.message })]),
+      el('time', { text: mmss(e.t) }),
+    ]);
+    item.style.setProperty('--c', GROUP_META[g].color);
+    return item;
+  }
+
+  private visibleEvent(e: LinkEvent) {
+    const g = eventGroup(e);
+    if (this.filter === 'all') return g !== 'info' || e.kind === 'reaction' || e.kind === 'objective';
+    return g === this.filter;
   }
 
   private renderFeed() {
-    const list = this.ui.feed;
-    list.innerHTML = '';
-    const filtered = this.filter === 'all' ? this.events : this.events.filter((e) => eventGroup(e) === this.filter);
-    for (const e of filtered.slice().reverse()) list.append(this.feedItem(e));
+    const f = this.ui.feed;
+    f.innerHTML = '';
+    const list = this.events.filter((e) => this.visibleEvent(e)).slice(-60).reverse();
+    if (!list.length) {
+      f.append(el('div', { class: 'cmp-empty', text: this.state?.mode === 'driving' ? 'Henüz olay yok — temiz sürüş! 👌' : 'Olaylar sürüş sırasında burada listelenir.' }));
+      return;
+    }
+    for (const e of list) f.append(this.eventItem(e));
   }
 
   private prependFeed(e: LinkEvent) {
-    if (this.filter !== 'all' && eventGroup(e) !== this.filter) return;
-    this.ui.feed.prepend(this.feedItem(e));
-    while (this.ui.feed.children.length > 80) this.ui.feed.lastElementChild?.remove();
-  }
-
-  private feedItem(e: LinkEvent): HTMLElement {
-    const g = eventGroup(e);
-    const m = GROUP_META[g];
-    const icon = KIND_ICON[e.kind] ?? m.icon;
-    return el('div', { class: `cmp-ev ${g}`, html: `<span class=\"cmp-ev-i\" style=\"background:${m.color}\">${icon}</span><div><b>${esc(e.title)}</b><small>${esc(e.detail ?? '')}</small></div><time>${mmss(e.t)}</time>` });
+    if (!this.visibleEvent(e)) return;
+    const f = this.ui.feed;
+    f.querySelector('.cmp-empty')?.remove();
+    f.prepend(this.eventItem(e, true));
+    while (f.children.length > 60) f.lastChild?.remove();
   }
 
   private renderReport() {
     const r = this.report;
     const box = this.ui.reportBox;
-    if (!r) {
-      box.classList.add('hidden');
+    const show = !!r && this.state?.mode === 'report';
+    box.classList.toggle('hidden', !show);
+    if (!show || !r) return;
+    const stars = r.mission ? '★'.repeat(r.mission.stars) + '☆'.repeat(3 - r.mission.stars) : '';
+    box.innerHTML = `
+      <div class="cmp-r-head">
+        <div class="cmp-r-grade" style="--c:${scoreColor(r.overall)}"><b>${esc(r.grade)}</b><span>${r.overall}</span></div>
+        <div>
+          <small>Oturum raporu</small>
+          <h3>${r.mission ? esc(r.mission.title) : 'Serbest sürüş'}</h3>
+          ${r.mission ? `<div class="cmp-r-res ${r.mission.success ? 'ok' : 'fail'}">${r.mission.success ? 'Görev başarılı' : 'Görev başarısız'} <span class="stars">${stars}</span></div>` : ''}
+          ${r.mission && !r.mission.success && r.mission.failReason ? `<small class="muted">${esc(r.mission.failReason)}</small>` : ''}
+        </div>
+      </div>
+      <div class="cmp-r-meta"><span>🕑 ${mmss(r.durationSec)}</span><span>📍 ${r.distanceKm.toFixed(1)} km</span><span>💥 ${r.counts.crash}</span><span>⛔ ${r.counts.violation}</span><span>⚠️ ${r.counts.warning}</span><span>✓ ${r.counts.positive}</span></div>
+      ${r.strengths.length ? `<div class="cmp-r-list good"><b>Güçlü yönler</b>${r.strengths.map((s) => `<p>✓ ${esc(s)}</p>`).join('')}</div>` : ''}
+      ${r.tips.length ? `<div class="cmp-r-list"><b>Gelişim önerileri</b>${r.tips.map((s) => `<p>→ ${esc(s)}</p>`).join('')}</div>` : ''}
+      <small class="muted">Ayrıntılı rapor bilgisayar ekranında.</small>`;
+  }
+
+  // ——————————————————————————— live reactions ———————————————————————————
+
+  private react(e: LinkEvent) {
+    const g = eventGroup(e);
+    const big = g === 'crash' || e.severity === 'critical' || e.severity === 'major';
+    if (big) {
+      this.showAlert(e);
+      this.flash(GROUP_META[g].color);
+      if (this.prefs.vibrate) navigator.vibrate?.(e.severity === 'critical' || g === 'crash' ? [260, 90, 260, 90, 260] : [180, 80, 180]);
+      this.cue(g === 'crash' ? 'crash' : 'bad');
+      if (this.prefs.voice) this.speak(e.message);
+    } else if (e.severity === 'minor') {
+      this.flash(GROUP_META[g].color, true);
+      if (this.prefs.vibrate) navigator.vibrate?.(70);
+      this.cue('warn');
+    } else if (e.severity === 'positive') {
+      this.cue('good');
+    }
+  }
+
+  private showAlert(e: LinkEvent) {
+    const g = eventGroup(e);
+    const a = this.ui.alert;
+    window.clearTimeout(this.alertTimer);
+    a.className = `cmp-alert ${g}`;
+    a.style.setProperty('--c', GROUP_META[g].color);
+    a.innerHTML = `<div class="cmp-alert-card"><span class="cmp-alert-i">${KIND_ICON[e.kind] ?? GROUP_META[g].icon}</span><small>${esc(GROUP_META[g].title.toUpperCase())}${e.severity === 'critical' ? ' · KRİTİK' : ''}</small><h2>${esc(e.label)}</h2><p>${esc(e.message)}</p><time>${mmss(e.t)}</time></div>`;
+    this.alertTimer = window.setTimeout(() => a.classList.add('hidden'), e.severity === 'critical' ? 4200 : 3200);
+  }
+
+  private flash(color: string, soft = false) {
+    const f = this.ui.flash;
+    f.style.setProperty('--c', color);
+    f.classList.remove('on', 'soft');
+    void f.offsetWidth; // restart the animation
+    f.classList.add('on');
+    if (soft) f.classList.add('soft');
+  }
+
+  private toast(text: string, kind: 'info' | 'good' | 'warn' | 'bad') {
+    const t = el('div', { class: `cmp-toast ${kind}`, text });
+    this.ui.toasts.append(t);
+    while (this.ui.toasts.children.length > 3) this.ui.toasts.firstChild?.remove();
+    setTimeout(() => t.classList.add('out'), 2800);
+    setTimeout(() => t.remove(), 3200);
+  }
+
+  private resetCounts() {
+    this.counts = { crash: 0, violation: 0, warning: 0, positive: 0, info: 0 };
+  }
+
+  private recount() {
+    this.resetCounts();
+    for (const e of this.events) this.counts[eventGroup(e)]++;
+  }
+
+  // ——————————————————————————— device features ———————————————————————————
+
+  private async keepAwake() {
+    const wl = (navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock;
+    if (!wl || this.wakeLock) return;
+    try {
+      this.wakeLock = await wl.request('screen');
+      (this.wakeLock as unknown as EventTarget).addEventListener?.('release', () => (this.wakeLock = null));
+    } catch {
+      this.wakeLock = null;
+    }
+  }
+
+  private unlockAudio() {
+    if (this.audioCtx) {
+      if (this.audioCtx.state === 'suspended') void this.audioCtx.resume();
       return;
     }
-    box.classList.remove('hidden');
-    const comps = COMPONENTS.map((c) => `<div class=\"cmp-comp\"><span>${COMPONENT_META[c].title}</span><div class=\"cmp-bar\"><i style=\"width:${r.components[c]}%;background:${scoreColor(r.components[c])}\"></i></div><b>${r.components[c]}</b></div>`).join('');
-    const tips = r.tips.length ? `<ol>${r.tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ol>` : '';
-    box.innerHTML = `<div class=\"cmp-rep-head\"><div class=\"cmp-rep-score\" style=\"color:${scoreColor(r.overall)}\">${r.overall}</div><div><b>${esc(r.grade)} · ${esc(r.title)}</b><small>${r.distanceKm.toFixed(1)} km · ${r.durationMin} dk</small></div></div><div class=\"cmp-comps\">${comps}</div>${tips}`;
+    try {
+      this.audioCtx = new AudioContext();
+    } catch {
+      this.audioCtx = null;
+    }
+    void this.keepAwake();
   }
+
+  private cue(kind: 'connect' | 'crash' | 'bad' | 'warn' | 'good' | 'report') {
+    const ctx = this.audioCtx;
+    if (!this.prefs.sound || !ctx || ctx.state !== 'running') return;
+    const notes: Record<typeof kind, [number, number, OscillatorType][]> = {
+      connect: [
+        [660, 0.09, 'sine'],
+        [990, 0.14, 'sine'],
+      ],
+      crash: [
+        [220, 0.16, 'square'],
+        [160, 0.28, 'square'],
+      ],
+      bad: [
+        [520, 0.12, 'triangle'],
+        [390, 0.2, 'triangle'],
+      ],
+      warn: [[620, 0.1, 'triangle']],
+      good: [
+        [880, 0.07, 'sine'],
+        [1175, 0.1, 'sine'],
+      ],
+      report: [
+        [523, 0.1, 'sine'],
+        [659, 0.1, 'sine'],
+        [784, 0.18, 'sine'],
+      ],
+    };
+    let t = ctx.currentTime;
+    for (const [f, d, type] of notes[kind]) {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = type;
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.25, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+      o.connect(g).connect(ctx.destination);
+      o.start(t);
+      o.stop(t + d + 0.02);
+      t += d * 0.85;
+    }
+  }
+
+  private historyOpen = false;
 
   private toggleHistory() {
     this.historyOpen = !this.historyOpen;
@@ -598,100 +749,23 @@ export class Companion {
       box.innerHTML = '';
       return;
     }
-    const avg = `<div class=\"cmp-karne\"><b>Genel ortalama</b> <span style=\"color:${scoreColor(h.karneOverall)}\">${h.karneOverall} ${h.karneGrade}</span></div>`;
+    const avg = `<div class="cmp-karne"><b>Genel ortalama</b> <span style="color:${scoreColor(h.karneOverall)}">${h.karneOverall} ${h.karneGrade}</span></div>`;
     const list = h.sessions.map((s) => {
-      const detail = `<div class=\"sess-detail hidden\">
+      const detail = `<div class="sess-detail hidden">
         <div>${s.components ? Object.entries(s.components).map(([k, v]) => `<div>${k}: ${v}</div>`).join('') : ''}</div>
         ${s.tips?.length ? `<p><b>Öneriler:</b> ${s.tips.map(esc).join(' · ')}</p>` : ''}
         ${s.strengths?.length ? `<p><b>Güçlü:</b> ${s.strengths.map(esc).join(' · ')}</p>` : ''}
         ${s.keyStats?.length ? s.keyStats.map((ks) => `<div>${esc(ks.label)}: ${esc(ks.value)}</div>`).join('') : ''}
       </div>`;
-      return `<div class=\"sess-row\" data-id=\"${esc(s.id)}\"><b>${esc(s.title)}</b> · ${new Date(s.at).toLocaleDateString('tr')} · ${s.distanceKm.toFixed(1)} km · <span style=\"color:${scoreColor(s.overall)}\">${s.overall} ${s.grade}</span>${detail}</div>`;
+      return `<div class="sess-row" data-id="${esc(s.id)}"><b>${esc(s.title)}</b> · ${new Date(s.at).toLocaleDateString('tr')} · ${s.distanceKm.toFixed(1)} km · <span style="color:${scoreColor(s.overall)}">${s.overall} ${s.grade}</span>${detail}</div>`;
     }).join('');
-    box.innerHTML = `<h3>Oturum Geçmişi</h3>${avg}<div class=\"sess-list\">${list || '<p class=\"muted\">Henüz oturum yok.</p>'}</div>`;
+    box.innerHTML = `<h3>Oturum Geçmişi</h3>${avg}<div class="sess-list">${list || '<p class="muted">Henüz oturum yok.</p>'}</div>`;
     box.querySelectorAll('.sess-row').forEach((row) => {
       row.addEventListener('click', () => {
         const det = row.querySelector('.sess-detail');
         det?.classList.toggle('hidden');
       });
     });
-  }
-
-  private react(e: LinkEvent) {
-    const g = eventGroup(e);
-    if (g === 'positive') {
-      this.cue('positive');
-      return;
-    }
-    if (g === 'info') return;
-    const m = GROUP_META[g];
-    this.flash(m.color);
-    if (this.prefs.vibrate) navigator.vibrate?.(g === 'crash' ? [120, 60, 120] : 80);
-    if (this.prefs.sound) this.cue(g);
-    if (this.prefs.voice) this.speak(e.title);
-    if (g === 'crash' || g === 'violation') {
-      this.ui.alert.className = `cmp-alert ${g}`;
-      this.ui.alert.innerHTML = `<span>${m.icon}</span><div><b>${esc(e.title)}</b>${e.detail ? `<small>${esc(e.detail)}</small>` : ''}</div>`;
-      this.ui.alert.classList.remove('hidden');
-      window.clearTimeout(this.alertTimer);
-      this.alertTimer = window.setTimeout(() => this.ui.alert.classList.add('hidden'), 3200);
-    }
-  }
-
-  private flash(color: string) {
-    const f = this.ui.flash;
-    f.style.background = color;
-    f.classList.remove('on');
-    void f.offsetWidth;
-    f.classList.add('on');
-  }
-
-  private toast(text: string, kind: 'info' | 'ok' | 'warn') {
-    const t = el('div', { class: `cmp-toast ${kind}`, text });
-    this.ui.toasts.append(t);
-    setTimeout(() => t.remove(), 2800);
-  }
-
-  private resetCounts() {
-    this.counts = { crash: 0, violation: 0, warning: 0, positive: 0, info: 0 };
-  }
-
-  private recount() {
-    this.resetCounts();
-    for (const e of this.events) this.counts[eventGroup(e)]++;
-  }
-
-  private unlockAudio() {
-    if (this.audioCtx) return;
-    try {
-      this.audioCtx = new AudioContext();
-    } catch {
-      /* ignore */
-    }
-  }
-
-  private cue(kind: string) {
-    if (!this.prefs.sound || !this.audioCtx) return;
-    const ctx = this.audioCtx;
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.connect(g);
-    g.connect(ctx.destination);
-    const now = ctx.currentTime;
-    const freq = kind === 'crash' ? 180 : kind === 'violation' ? 280 : kind === 'warning' ? 420 : kind === 'positive' || kind === 'report' ? 660 : 520;
-    o.frequency.value = freq;
-    g.gain.setValueAtTime(0.12, now);
-    g.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-    o.start(now);
-    o.stop(now + 0.2);
-  }
-
-  private async keepAwake() {
-    try {
-      this.wakeLock = await navigator.wakeLock?.request('screen');
-    } catch {
-      /* ignore */
-    }
   }
 
   private speak(text: string) {
