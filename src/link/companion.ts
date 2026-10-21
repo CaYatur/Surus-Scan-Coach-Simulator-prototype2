@@ -167,8 +167,8 @@ export class Companion {
     pauseBtn: HTMLButtonElement;
     toggles: HTMLElement;
     stats: HTMLElement;
+    liveBtn: HTMLButtonElement;
     histBtn: HTMLButtonElement;
-    histLabel: HTMLElement;
   };
 
   constructor(host: HTMLElement) {
@@ -380,17 +380,20 @@ export class Companion {
       this.link.send({ t: 'cmd', cmd: paused ? 'resume' : 'pause' });
     };
     const toggles = el('div', { class: 'cmp-toggles' });
-    const histLabel = el('span', { text: 'Geçmiş' });
-    const histBtn = el('button', { class: 'cmp-switch', type: 'button' }, [el('i'), histLabel]) as HTMLButtonElement;
+    const liveBtn = el('button', { class: 'on', type: 'button', text: 'Canlı' }) as HTMLButtonElement;
+    const histBtn = el('button', { type: 'button', text: 'Geçmiş' }) as HTMLButtonElement;
+    liveBtn.setAttribute('aria-pressed', 'true');
     histBtn.setAttribute('aria-pressed', 'false');
-    histBtn.onclick = () => this.setView(this.view === 'history' ? 'live' : 'history');
+    liveBtn.onclick = () => this.setView('live');
+    histBtn.onclick = () => this.setView('history');
+    const seg = el('div', { class: 'cmp-seg', role: 'tablist' }, [liveBtn, histBtn]);
     const menuBtn = el('button', { class: 'cmp-btn ghost', text: 'Menü' });
     menuBtn.onclick = () => this.close();
     const offBtn = el('button', { class: 'cmp-btn danger', text: 'Bağlantıyı kes' });
     offBtn.onclick = () => {
       if (confirm('Bilgisayarla bağlantı kesilsin mi?')) this.disconnect();
     };
-    const foot = el('footer', { class: 'cmp-foot' }, [pauseBtn, toggles, el('div', { class: 'cmp-foot-row' }, [histBtn, menuBtn, offBtn])]);
+    const foot = el('footer', { class: 'cmp-foot' }, [pauseBtn, toggles, seg, el('div', { class: 'cmp-foot-row' }, [menuBtn, offBtn])]);
 
     const toasts = el('div', { class: 'cmp-toasts' });
     const alert = el('div', { class: 'cmp-alert hidden' });
@@ -405,7 +408,7 @@ export class Companion {
     r.append(flash, top, scroll, foot, toasts, alert, wait);
     r.addEventListener('pointerdown', () => this.unlockAudio(), { passive: true });
 
-    this.ui = { nofb, conn, connText: conn.querySelector('span')!, mode, where, timer, speed, speedArc, limit, gear, sigL, sigR, scoreArc, scoreVal, grade, comps, counters, mission, reportBox, historyBox, feed, chips, toasts, alert, flash, wait, idle, pauseBtn, toggles, stats, histBtn, histLabel };
+    this.ui = { nofb, conn, connText: conn.querySelector('span')!, mode, where, timer, speed, speedArc, limit, gear, sigL, sigR, scoreArc, scoreVal, grade, comps, counters, mission, reportBox, historyBox, feed, chips, toasts, alert, flash, wait, idle, pauseBtn, toggles, stats, liveBtn, histBtn };
     this.buildToggles();
     this.buildChips();
   }
@@ -754,8 +757,9 @@ export class Companion {
     this.view = view;
     if (view === 'live') this.historyFocus = 'list';
     this.root.dataset.view = view;
-    this.ui.histLabel.textContent = view === 'history' ? 'Canlı' : 'Geçmiş';
+    this.ui.liveBtn.classList.toggle('on', view === 'live');
     this.ui.histBtn.classList.toggle('on', view === 'history');
+    this.ui.liveBtn.setAttribute('aria-pressed', view === 'live' ? 'true' : 'false');
     this.ui.histBtn.setAttribute('aria-pressed', view === 'history' ? 'true' : 'false');
     if (view === 'history') this.renderHistory();
     this.root.querySelector('.cmp-scroll')?.scrollTo({ top: 0 });
