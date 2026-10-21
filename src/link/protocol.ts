@@ -49,6 +49,28 @@ export type LinkReport = {
   counts: { crash: number; violation: number; warning: number; positive: number };
 };
 
+export type LinkHistory = {
+  karneOverall: number;
+  karneGrade: string;
+  karneComponents: Record<Component, number>;
+  sessions: {
+    id: string;
+    at: number;
+    title: string;
+    overall: number;
+    grade: string;
+    map: string;
+    conditions: string;
+    distanceKm: number;
+    durationSec: number;
+    risk: string;
+    tips: string[];
+    strengths: string[];
+    components: Record<Component, number>;
+    keyStats: { label: string; value: string }[];
+  }[];
+};
+
 export type HostMsg =
   | { t: 'hello'; name: string }
   | { t: 'snapshot'; state: LinkState; events: LinkEvent[]; tele: LinkTelemetry | null; report: LinkReport | null }
@@ -58,6 +80,7 @@ export type HostMsg =
   | { t: 'notice'; text: string; kind: 'info' | 'good' | 'warn' | 'bad' }
   | { t: 'segment' }
   | { t: 'report'; report: LinkReport }
+  | { t: 'history'; history: LinkHistory }
   | { t: 'bye' };
 
 export type DisplayMsg = { t: 'hello'; name: string } | { t: 'cmd'; cmd: 'pause' | 'resume' } | { t: 'bye' };
